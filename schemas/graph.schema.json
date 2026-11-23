@@ -25,11 +25,7 @@
           "type": "string"
         },
         "scope": {
-          "allOf": [
-            {
-              "$ref": "#/$defs/Scope"
-            }
-          ],
+          "$ref": "#/$defs/Scope",
           "default": "unknown"
         },
         "dev": {

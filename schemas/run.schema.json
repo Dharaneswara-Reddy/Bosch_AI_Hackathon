@@ -46,7 +46,7 @@
           "type": "integer"
         },
         "duration_s": {
-          "minimum": 0.0,
+          "minimum": 0,
           "title": "Duration S",
           "type": "number"
         },
@@ -96,11 +96,7 @@
       "type": "string"
     },
     "resolution": {
-      "allOf": [
-        {
-          "$ref": "#/$defs/Resolution"
-        }
-      ],
+      "$ref": "#/$defs/Resolution",
       "default": "manifest-only"
     },
     "scanner_versions": {
@@ -136,19 +132,11 @@
       "title": "Ended At"
     },
     "status": {
-      "allOf": [
-        {
-          "$ref": "#/$defs/ScanStatus"
-        }
-      ],
+      "$ref": "#/$defs/ScanStatus",
       "default": "partial"
     },
     "llm_status": {
-      "allOf": [
-        {
-          "$ref": "#/$defs/LlmStatus"
-        }
-      ],
+      "$ref": "#/$defs/LlmStatus",
       "default": "unavailable"
     },
     "tools": {

@@ -634,6 +634,30 @@
           },
           "title": "Ai Adjustment Evidence Ids",
           "type": "array"
+        },
+        "human_decision": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Human Decision"
+        },
+        "human_note": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Human Note"
         }
       },
       "required": [
@@ -661,6 +685,20 @@
         "under_investigation"
       ],
       "title": "FindingState",
+      "type": "string"
+    },
+    "FixAction": {
+      "enum": [
+        "upgrade",
+        "upgrade_parent",
+        "pin_version",
+        "remove_dependency",
+        "replace_dependency",
+        "pin_action_sha",
+        "pin_image_digest",
+        "escalate_review"
+      ],
+      "title": "FixAction",
       "type": "string"
     },
     "MatchBasis": {
@@ -767,6 +805,85 @@
       ],
       "title": "RelevanceVerdict",
       "type": "string"
+    },
+    "RemediationProposal": {
+      "properties": {
+        "proposal_id": {
+          "title": "Proposal Id",
+          "type": "string"
+        },
+        "finding_id": {
+          "title": "Finding Id",
+          "type": "string"
+        },
+        "action": {
+          "$ref": "#/$defs/FixAction"
+        },
+        "target_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Target Version"
+        },
+        "rationale": {
+          "title": "Rationale",
+          "type": "string"
+        },
+        "rollback": {
+          "title": "Rollback",
+          "type": "string"
+        },
+        "breaking_change_risk": {
+          "title": "Breaking Change Risk",
+          "type": "string"
+        },
+        "evidence_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence Ids",
+          "type": "array"
+        },
+        "requires_human_approval": {
+          "default": true,
+          "title": "Requires Human Approval",
+          "type": "boolean"
+        },
+        "validated": {
+          "default": false,
+          "title": "Validated",
+          "type": "boolean"
+        },
+        "rejected_reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rejected Reason"
+        }
+      },
+      "required": [
+        "proposal_id",
+        "finding_id",
+        "action",
+        "target_version",
+        "rationale",
+        "rollback",
+        "breaking_change_risk",
+        "evidence_ids"
+      ],
+      "title": "RemediationProposal",
+      "type": "object"
     },
     "RiskAdjustment": {
       "additionalProperties": false,
@@ -922,6 +1039,13 @@
       },
       "title": "Agreement",
       "type": "object"
+    },
+    "proposals": {
+      "items": {
+        "$ref": "#/$defs/RemediationProposal"
+      },
+      "title": "Proposals",
+      "type": "array"
     }
   },
   "title": "FindingsArtifact",
