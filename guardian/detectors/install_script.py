@@ -13,7 +13,7 @@ from guardian.detectors._common import (
     evidence_record,
     finding_payload,
 )
-from guardian.models import UNKNOWN
+from guardian.models import UNKNOWN, CoverageStatus
 
 
 def _read_lockfile(value: Path | dict[str, Any] | None) -> tuple[dict[str, Any] | None, bytes]:
@@ -33,9 +33,7 @@ def _entries(lockfile: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
     packages = lockfile.get("packages")
     if isinstance(packages, dict):
         return {
-            str(path): value
-            for path, value in packages.items()
-            if isinstance(value, dict) and path
+            str(path): value for path, value in packages.items() if isinstance(value, dict) and path
         }
     # npm lockfile v1 stores entries recursively under ``dependencies``.
     found: dict[str, dict[str, Any]] = {}
@@ -90,7 +88,7 @@ def detect(
             coverage=coverage_rows(
                 "install_script",
                 normalized,
-                "not_covered",
+                CoverageStatus.NOT_COVERED,
                 "Install scripts are checked for npm only",
                 counts,
             )
@@ -102,7 +100,7 @@ def detect(
             coverage=coverage_rows(
                 "install_script",
                 normalized,
-                "n/a",
+                CoverageStatus.NOT_APPLICABLE,
                 "Current or baseline npm lockfile is unavailable",
                 counts,
             )
@@ -150,7 +148,9 @@ def detect(
         for row in coverage_rows(
             "install_script",
             [ecosystem],
-            ("finding" if findings else "pass") if ecosystem == "npm" else "not_covered",
+            (CoverageStatus.FINDING if findings else CoverageStatus.PASS)
+            if ecosystem == "npm"
+            else CoverageStatus.NOT_COVERED,
             "" if ecosystem == "npm" else "Install scripts are checked for npm only",
             counts,
         )

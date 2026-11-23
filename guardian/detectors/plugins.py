@@ -18,7 +18,7 @@ from guardian.detectors._common import (
     json_bytes,
     sha256_bytes,
 )
-from guardian.models import UNKNOWN, CoverageRow, Finding, Scan
+from guardian.models import UNKNOWN, CoverageRow, CoverageStatus, Finding, Scan
 
 
 def _read_json(path: Path) -> object:
@@ -52,14 +52,18 @@ def _run_git_diff(context: DetectorContext) -> DetectionResult:
     if context.target_path is None:
         return DetectionResult(
             coverage=coverage_rows(
-                "git_diff", ecosystems, "n/a", "Target is not a local repository"
+                "git_diff",
+                ecosystems,
+                CoverageStatus.NOT_APPLICABLE,
+                "Target is not a local repository",
             )
         )
     return git_diff.detect(context.target_path, _baseline_commit(context), ecosystems=ecosystems)
 
 
 def _run_typosquat(context: DetectorContext) -> DetectionResult:
-    return typosquat.detect(_read_json(context.sbom))
+    graph = getattr(context.result, "graph", None)
+    return typosquat.detect(_read_json(context.sbom), target_path=context.target_path, graph=graph)
 
 
 def _run_image_pin(context: DetectorContext) -> DetectionResult:
@@ -67,7 +71,10 @@ def _run_image_pin(context: DetectorContext) -> DetectionResult:
     if context.target_path is None:
         return DetectionResult(
             coverage=coverage_rows(
-                "image_pin", ecosystems, "n/a", "Dockerfile checks require a local repository"
+                "image_pin",
+                ecosystems,
+                CoverageStatus.NOT_APPLICABLE,
+                "Dockerfile checks require a local repository",
             )
         )
     return image_pin.detect(context.target_path, ecosystems=ecosystems)
@@ -78,7 +85,10 @@ def _run_ci_pin(context: DetectorContext) -> DetectionResult:
     if context.target_path is None:
         return DetectionResult(
             coverage=coverage_rows(
-                "ci_pin", ecosystems, "n/a", "Workflow checks require a local repository"
+                "ci_pin",
+                ecosystems,
+                CoverageStatus.NOT_APPLICABLE,
+                "Workflow checks require a local repository",
             )
         )
     return ci_pin.detect(context.target_path, ecosystems=ecosystems)
@@ -110,7 +120,9 @@ def _run_install_script(context: DetectorContext) -> DetectionResult:
     if not target_lockfiles:
         no_lock_rows = []
         for ecosystem in ecosystems:
-            status = "n/a" if ecosystem == "npm" else "not_covered"
+            status = (
+                CoverageStatus.NOT_APPLICABLE if ecosystem == "npm" else CoverageStatus.NOT_COVERED
+            )
             reason = (
                 "No npm lockfile found"
                 if ecosystem == "npm"
@@ -151,7 +163,7 @@ def _run_install_script(context: DetectorContext) -> DetectionResult:
 
     counts = {ecosystem: 0 for ecosystem in ecosystems}
     counts["npm"] = len(target_lockfiles)
-    status = "finding" if combined.findings else "pass"
+    status = CoverageStatus.FINDING if combined.findings else CoverageStatus.PASS
     coverage: list[CoverageRow] = []
     for ecosystem in ecosystems:
         if ecosystem == "npm":
@@ -161,7 +173,7 @@ def _run_install_script(context: DetectorContext) -> DetectionResult:
                 coverage_rows(
                     "install_script",
                     [ecosystem],
-                    "not_covered",
+                    CoverageStatus.NOT_COVERED,
                     "Install scripts are checked for npm only",
                     counts,
                 )
@@ -190,9 +202,7 @@ def _materialize_result(
         raw_file = f"raw/detectors/{name}/source-{index:04d}-{source.name}"
         artifacts[raw_file] = content
         staged_records.append(
-            record.model_copy(
-                update={"file": raw_file, "sha256": sha256_bytes(content)}, deep=True
-            )
+            record.model_copy(update={"file": raw_file, "sha256": sha256_bytes(content)}, deep=True)
         )
 
     if result.finding_details:

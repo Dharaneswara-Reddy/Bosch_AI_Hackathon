@@ -13,6 +13,7 @@ from guardian.detectors._common import (
     evidence_record,
     finding_payload,
 )
+from guardian.models import CoverageStatus
 
 _FROM = re.compile(r"^\s*FROM\s+(?:(?:--platform=\S+)\s+)?(?P<image>\S+)", re.IGNORECASE)
 
@@ -65,6 +66,7 @@ def detect(target_path: Path, *, ecosystems: list[str] | None = None) -> Detecti
                 _image_component(image),
                 "unpinned_base_image",
                 [record.evidence_id],
+                image_tag=tag or None,
                 image=image,
                 file=relative,
                 line=line_number,
@@ -73,7 +75,7 @@ def detect(target_path: Path, *, ecosystems: list[str] | None = None) -> Detecti
             findings.append(finding)
             finding_details[finding.finding_id] = details
     counts = {ecosystem: 0 for ecosystem in known_ecosystems}
-    status = "finding" if findings else "pass"
+    status = CoverageStatus.FINDING if findings else CoverageStatus.PASS
     return DetectionResult(
         findings=findings,
         evidence=evidence,
