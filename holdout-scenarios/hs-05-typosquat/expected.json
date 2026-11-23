@@ -1,0 +1,12 @@
+[
+  {
+    "kind": "anomaly",
+    "anomaly_type": "unexpected_dependency",
+    "purl": "pkg:npm/crossenv"
+  },
+  {
+    "kind": "anomaly",
+    "anomaly_type": "suspected_typosquat",
+    "purl": "pkg:npm/crossenv"
+  }
+]

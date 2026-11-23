@@ -1,0 +1,4 @@
+description: >-
+  A direct dependency whose name is one edit away from a popular package is added (crossenv vs cross-env). The version used is the npm security placeholder, which contains no code.
+base: juice-shop@c9f99228d9d56afb5f5ca7925376292f7fa44b13
+author: P4

@@ -1,0 +1,4 @@
+description: >-
+  A new GitHub Actions workflow uses a third-party action by branch name (@master) instead of a 40-character commit SHA. The checkout step is pinned and must not be flagged.
+base: juice-shop@c9f99228d9d56afb5f5ca7925376292f7fa44b13
+author: P4

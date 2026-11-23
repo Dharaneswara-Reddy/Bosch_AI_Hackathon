@@ -1,0 +1,7 @@
+[
+  {
+    "kind": "anomaly",
+    "anomaly_type": "unexpected_dependency",
+    "purl": "pkg:npm/left-pad"
+  }
+]
