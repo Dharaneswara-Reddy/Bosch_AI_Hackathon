@@ -310,7 +310,7 @@ def build_report(
         validations=[_validation(run, by_id.get(run.proposal.finding_id), labels)
                      for run in runs],
         remaining_risks=_remaining(ranked, runs, labels),
-        accepted_risks=_accepted(ranked, decisions, labels),
+        accepted_risks=_accepted(artifacts.findings, decisions, labels),
         escalated=[_ranked(f, labels) for f in ranked if f.human_decision == "escalated"],
         audit_trail=_audit(scan, artifacts.agent_trace, decisions, runs),
     )

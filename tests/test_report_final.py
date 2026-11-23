@@ -193,3 +193,16 @@ def test_a_clean_verified_fix_without_tests_has_medium_confidence(tmp_path: Path
     render(out)
     [validation] = _report(out).validations
     assert (validation.verdict, validation.confidence) == ("fixed", "medium")
+
+
+def test_a_dismissed_suspicious_package_is_an_accepted_risk(tmp_path: Path) -> None:
+    out = _scan_out(tmp_path)
+    artifact = FindingsArtifact.model_validate_json((out / "findings.json").read_bytes())
+    anomaly = _finding("a1", "CVE-A", RiskLevel.LOW).model_copy(
+        update={"kind": FindingKind.ANOMALY, "advisory_id": None, "anomaly_type": "typosquat"})
+    artifact.findings.append(anomaly)
+    (out / "findings.json").write_text(artifact.model_dump_json(), encoding="utf-8")
+    DecisionLog(out).record(HumanDecision(
+        finding_id="a1", decision="dismissed", note="internal fork", reviewer="bo"))
+    render(out)
+    assert [a.finding_id for a in _report(out).accepted_risks] == ["a1"]
