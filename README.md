@@ -14,7 +14,7 @@ python -m scripts.generate_schemas
 
 The demo targets in the team plan are Juice Shop (`c9f9922`) and RailsGoat (`f5951f1`). The scanner versions verified by the team are Grype `0.122.1` and OSV-Scanner `2.7.1`.
 
-Copy `.env.example` to `.env` for local settings. Use the exact image tags, digests, and database dates provided by the scanner team's prefetch step. The report records the tool metadata from each run. Leave the AI provider as `none` for an offline demo.
+Copy `.env.example` to `.env` for local settings. Run `bash scripts/prefetch.sh` for the pinned images and Grype database. OSV queries its advisory service during scans. See [scanner setup](docs/scanners.md) for details. The report records the tool metadata from each run. Leave the AI provider as `none` for an offline demo.
 
 ## Run a local scan
 

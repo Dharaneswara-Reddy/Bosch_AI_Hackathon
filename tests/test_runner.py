@@ -1,5 +1,7 @@
 import json
+import sys
 from pathlib import Path
+from types import ModuleType
 
 from guardian import runner
 from guardian.cli import main
@@ -77,13 +79,8 @@ def test_scan_rejects_using_target_as_output(tmp_path):
 def test_p2_parsers_merge_real_fixture_findings(monkeypatch, tmp_path):
     import shutil
 
-    import pytest
-
-    grype = pytest.importorskip("guardian.scanners.grype")
-    osv = pytest.importorskip("guardian.scanners.osv")
+    from guardian.scanners import grype, osv
     fixtures = Path(__file__).parent / "fixtures"
-    if not all((fixtures / f"{name}.sample.json").is_file() for name in ("grype", "osv")):
-        pytest.skip("P2 scanner fixtures are not present on this checkout.")
 
     def fixture_run(name):
         def run(sbom_path, out_dir, image):
@@ -100,9 +97,26 @@ def test_p2_parsers_merge_real_fixture_findings(monkeypatch, tmp_path):
     output = tmp_path / "out"
     monkeypatch.setattr(grype, "run_grype", fixture_run("grype"))
     monkeypatch.setattr(osv, "run_osv", fixture_run("osv"))
-    monkeypatch.setattr(runner, "_inventory", _inventory)
+    graph = ModuleType("guardian.graph")
+    purl = "pkg:gem/actionmailbox@8.0.4"
+    path = ["app", "direct", "bom-actionmailbox"]
+    graph.shortest_path = lambda graph, component: path if component == path[-1] else None
+    graph.path_count = lambda graph, component: 2
+    monkeypatch.setitem(sys.modules, "guardian.graph", graph)
+
+    def inventory(context):
+        _inventory(context)
+        context.graph = object()
+        context.result.graph.nodes.append(Component(
+            component_id=path[-1], purl=purl, name="actionmailbox", ecosystem="gem",
+        ))
+
+    monkeypatch.setattr(runner, "_inventory", inventory)
     monkeypatch.setattr(runner, "_detectors", lambda context: None)
     result = runner.scan(target, output, use_llm=False)
+    matched = [finding for finding in result.findings if finding.purl == purl]
+    assert matched and all(finding.component_id == path[-1] for finding in matched)
+    assert all(finding.dependency_path == path and finding.path_count == 2 for finding in matched)
     assert result.scan.status == "complete", result.scan.errors
     assert result.findings
     evidence_ids = {evidence.evidence_id for evidence in result.evidence}
@@ -142,3 +156,30 @@ def test_cache_reuses_clean_checkout_and_invalidates_changed_lockfile(monkeypatc
     third = runner.scan(target, out, use_llm=False)
     assert third.scan.scan_id != first.scan.scan_id
     assert len(scans) == 2
+
+
+def test_paths_preserve_exact_bom_ids_and_skip_ambiguous_purls(monkeypatch, tmp_path):
+    context, _ = runner._prepare(tmp_path, tmp_path / "output", None, False, None)
+    context.graph = object()
+    context.result.graph = GraphArtifact(nodes=[
+        Component(component_id="copy-a", purl="pkg:npm/lib@1", name="lib"),
+        Component(component_id="copy-b", purl="pkg:npm/lib@1", name="lib"),
+        Component(component_id="unreachable", purl="pkg:npm/other@1", name="other"),
+    ])
+    graph = ModuleType("guardian.graph")
+    graph.shortest_path = lambda _, component: (
+        ["app", component] if component != "unreachable" else None
+    )
+    graph.path_count = lambda _, component: 1
+    monkeypatch.setitem(sys.modules, "guardian.graph", graph)
+    findings = [
+        Finding(finding_id="a", kind="vulnerability", component_id="copy-a", purl="pkg:npm/lib@1"),
+        Finding(finding_id="b", kind="vulnerability", component_id="unknown", purl="pkg:npm/lib@1"),
+        Finding(finding_id="c", kind="vulnerability", component_id="unreachable",
+                purl="pkg:npm/other@1"),
+    ]
+    exact, ambiguous, unreachable = runner._paths(context, findings)
+    assert exact.dependency_path == ["app", "copy-a"]
+    assert exact.path_count == 1
+    assert ambiguous.component_id == "unknown" and ambiguous.dependency_path == []
+    assert unreachable.dependency_path == [] and unreachable.path_count is None

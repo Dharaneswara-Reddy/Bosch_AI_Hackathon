@@ -217,21 +217,26 @@ def _paths(context: ScanContext, findings: list[Finding]) -> list[Finding]:
         return findings
     graph_api = _module("guardian.graph")
     scanner_api = _module("guardian.scanners.merge")
-    components = {node.purl: node.component_id for node in context.result.graph.nodes}
+    component_ids = {node.component_id for node in context.result.graph.nodes}
+    ids_by_purl: dict[str, set[str]] = {}
+    for node in context.result.graph.nodes:
+        if node.purl != UNKNOWN:
+            ids_by_purl.setdefault(node.purl, set()).add(node.component_id)
+
+    matched: list[Finding] = []
+    for finding in findings:
+        if finding.component_id not in component_ids:
+            candidates = ids_by_purl.get(finding.purl, set())
+            if len(candidates) == 1:
+                finding = finding.model_copy(update={"component_id": next(iter(candidates))})
+        matched.append(finding)
+
     paths: dict[str, tuple[list[str], int]] = {}
-    component_ids = set(components.values())
-    for purl in sorted({finding.purl for finding in findings} & components.keys()):
-        component = components[purl]
-        path = list(graph_api.shortest_path(context.graph, component))
+    for component in sorted({finding.component_id for finding in matched} & component_ids):
+        path = graph_api.shortest_path(context.graph, component)
         if path:
-            paths[component] = (path, graph_api.path_count(context.graph, component))
-    attached = [
-        finding if finding.component_id in component_ids else finding.model_copy(
-            update={"component_id": components.get(finding.purl, finding.component_id)},
-        )
-        for finding in findings
-    ]
-    return TypeAdapter(list[Finding]).validate_python(scanner_api.attach_paths(attached, paths))
+            paths[component] = (list(path), graph_api.path_count(context.graph, component))
+    return TypeAdapter(list[Finding]).validate_python(scanner_api.attach_paths(matched, paths))
 
 
 def _scanners(context: ScanContext) -> None:
