@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {buildDecision, fixTitle, levelRows, needsPolling, primaryAction, statusLabel} from './fixes-logic.js';
+import {buildDecision, fixTitle, stepCounts, levelRows, needsPolling, primaryAction, statusLabel} from './fixes-logic.js';
 
 const entry = (status, extra = {}) => ({
   status, source: 'rule', unavailable_reason: null,
@@ -49,4 +49,10 @@ test('buildDecision requires a reviewer and trims input', () => {
 test('statusLabel is human readable', () => {
   assert.equal(statusLabel('awaiting_approval'), 'Awaiting approval');
   assert.equal(statusLabel('verified'), 'Verified');
+});
+
+test('stepCounts shows passed of total and lists failing names, or nothing without counts', () => {
+  assert.equal(stepCounts({status: 'passed', passed: 7, failed: 0, total: 7}), '7 of 7 passed');
+  assert.equal(stepCounts({status: 'failed', passed: 3, failed: 4, total: 7}), '3 of 7 passed, 4 failed');
+  assert.equal(stepCounts({status: 'not_run', reason: 'x'}), '');
 });

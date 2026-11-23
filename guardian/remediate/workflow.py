@@ -23,6 +23,7 @@ from guardian.remediate.run import (
     FixPlanError,
     FixRun,
     FixStatus,
+    failure_summary,
     load_run,
     resolve_target,
     save_fix,
@@ -34,8 +35,9 @@ from guardian.remediate.sandbox import (
     build_check,
     create_sandbox,
     run_command,
-    run_tests,
 )
+from guardian.remediate.source import overlay_source
+from guardian.remediate.validate import run_captured, validate_project
 
 ScanFn = Callable[[Path, Path], RunResult]
 Graph = CompiledStateGraph["FixState", None, "FixState", "FixState"]
@@ -58,6 +60,7 @@ class FixDeps:
     runner: Runner = run_command
     scan: ScanFn = scan_without_ai
     engine: str | None = field(default_factory=find_engine)
+    capture: Runner = run_captured
 
 
 def _thread(scan_id: str, proposal_id: str) -> Any:
@@ -130,9 +133,15 @@ class _Steps:
             "build": done, "status": FixStatus.FAILED if failed else run.status,
             "error": done.detail if failed else None})
 
+    def fetch_source(self, run: FixRun) -> FixRun:
+        done = overlay_source(self.work_dir, self._folder(run) / "sandbox", self.deps.capture)
+        return run.model_copy(update={"source": done})
+
     def run_tests(self, run: FixRun) -> FixRun:
-        result = run_tests(self._folder(run) / "sandbox", self.deps.runner, self.deps.engine)
-        return run.model_copy(update={"tests": result})
+        note = run.source.detail if run.source and run.source.status == "failed" else ""
+        result = validate_project(
+            self._folder(run) / "sandbox", self.deps.capture, self.deps.engine, note)
+        return run.model_copy(update={"app_build": result.build, "tests": result.tests})
 
     def rescan(self, run: FixRun) -> FixRun:
         folder = self._folder(run)
@@ -144,8 +153,9 @@ class _Steps:
         return run.model_copy(update={"diff": diff_runs(load_run(self.work_dir / "out"), after)})
 
     def verification_summary(self, run: FixRun) -> FixRun:
-        verified = run.model_copy(update={"status": FixStatus.VERIFIED})
-        return verified.model_copy(update={"summary": verification_summary(verified)})
+        status = FixStatus.FAILED if failure_summary(run) else FixStatus.VERIFIED
+        done = run.model_copy(update={"status": status})
+        return done.model_copy(update={"summary": verification_summary(done)})
 
 
 def _stop_if_failed(next_node: str) -> Callable[[FixState], str]:
@@ -163,7 +173,8 @@ def build_fix_graph(
     graph = StateGraph(FixState)
     graph.add_node("plan", steps.plan)
     graph.add_node("human_approval", steps.human_approval)
-    for name in ("record_rejection", "sandbox_apply", "build_check", "run_tests", "rescan",
+    for name in ("record_rejection", "sandbox_apply", "build_check", "fetch_source", "run_tests",
+                 "rescan",
                  "diff", "verification_summary"):
         node: Any = steps.guarded(getattr(steps, name))
         graph.add_node(name, node)
@@ -172,9 +183,10 @@ def build_fix_graph(
     graph.add_conditional_edges("human_approval", _after_approval)
     graph.add_edge("record_rejection", END)
     graph.add_conditional_edges("sandbox_apply", _stop_if_failed("build_check"))
-    graph.add_conditional_edges("build_check", _stop_if_failed("run_tests"))
-    for source, target in (("run_tests", "rescan"), ("rescan", "diff"),
-                           ("diff", "verification_summary"), ("verification_summary", END)):
+    graph.add_conditional_edges("build_check", _stop_if_failed("fetch_source"))
+    for source, target in (("fetch_source", "run_tests"), ("run_tests", "rescan"),
+                           ("rescan", "diff"), ("diff", "verification_summary"),
+                           ("verification_summary", END)):
         graph.add_edge(source, target)
     return graph.compile(checkpointer=checkpointer)
 

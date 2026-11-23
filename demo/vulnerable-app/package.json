@@ -5,7 +5,9 @@
   "description": "Deliberately vulnerable demo app for the Software Supply Chain Guardian. Local use only; never deploy.",
   "main": "src/server.js",
   "scripts": {
-    "start": "node src/server.js"
+    "start": "node src/server.js",
+    "build": "node scripts/build.js",
+    "test": "node --test"
   },
   "dependencies": {
     "express-jwt": "0.1.3",

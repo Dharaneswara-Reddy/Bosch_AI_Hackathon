@@ -78,6 +78,7 @@ def _vuln(name: str, version: str, path: list[str], fixed: list[str]) -> Finding
 def _demo_run(tmp_path: Path) -> tuple[RunResult, Path, EvidenceStore]:
     target = tmp_path / "app"
     shutil.copytree(DEMO, target)
+    (target / "src" / "stats.js").unlink()
     out = tmp_path / "out"
     (out / "raw").mkdir(parents=True)
     jwt, lodash, mini = (
@@ -115,7 +116,7 @@ def test_reachability_finds_imports_and_skips_vendor() -> None:
     scan = scan_imports(DEMO, {"express-jwt", "lodash", "expresss-session"})
     assert scan.source_available
     assert [(h.file, h.line) for h in scan.hits["express-jwt"]] == [("src/server.js", 5)]
-    assert "lodash" not in scan.hits
+    assert [(h.file, h.line) for h in scan.hits["lodash"]] == [("src/stats.js", 1)]
     assert "expresss-session" not in scan.hits
 
 

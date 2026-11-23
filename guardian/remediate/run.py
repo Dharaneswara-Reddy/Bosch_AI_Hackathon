@@ -40,6 +40,8 @@ class FixRun(BaseModel):
     target: FixTarget | None = None
     apply: StepResult | None = None
     build: StepResult | None = None
+    source: StepResult | None = None
+    app_build: TestRun | None = None
     tests: TestRun | None = None
     diff: RescanDiff | None = None
     summary: str = ""
@@ -101,18 +103,42 @@ def _step_text(label: str, status: str, detail: str, shown: str) -> str:
     return f"{label} {status}" + (f": {detail}" if status == shown and detail else "")
 
 
+def _tests_text(tests: TestRun) -> str:
+    status = tests.status.replace("_", " ")
+    text = _step_text("Tests", status, tests.reason, "not run" if status == "not run" else "failed")
+    if tests.status == "passed" and tests.total is not None:
+        text += f" ({tests.passed} of {tests.total})"
+    return text
+
+
+def failure_summary(run: FixRun) -> str | None:
+    build, tests = run.app_build, run.tests
+    if build and build.status == "failed":
+        return f"Build failed: {build.reason}; not safe to apply."
+    if tests and tests.status == "failed":
+        if tests.failed is None or tests.total is None:
+            return f"Tests failed: {tests.reason}; not safe to apply."
+        names = ", ".join(tests.failed_tests) or "its tests"
+        return (f"Tests failed: {tests.failed} of {tests.total} — the upgrade breaks {names}; "
+                "not safe to apply.")
+    return None
+
+
 def verification_summary(run: FixRun) -> str:
     if run.diff is None:
         return run.error or ""
     build = run.build or StepResult(status="failed", detail="not run")
     tests = run.tests or TestRun(status="not_run", reason="not run")
-    status = tests.status.replace("_", " ")
-    return " ".join([
-        _outcome(run.diff),
-        _step_text("Build check", build.status, build.detail, "failed") + ".",
-        _step_text("Tests", status, tests.reason, "not run" if status == "not run" else "failed")
-        + ".",
-    ])
+    failure = failure_summary(run)
+    parts = [failure] if failure else []
+    parts += [_outcome(run.diff), _step_text("Build check", build.status, build.detail, "failed")
+              + "."]
+    app = run.app_build
+    if app is not None and app.status != "not_run":
+        parts.append(_step_text("Build", app.status, app.reason, "failed") + ".")
+    if not failure:
+        parts.append(_tests_text(tests) + ".")
+    return " ".join(parts)
 
 
 def load_run(out_dir: Path) -> RunResult:

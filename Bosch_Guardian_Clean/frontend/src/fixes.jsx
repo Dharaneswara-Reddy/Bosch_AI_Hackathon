@@ -1,7 +1,7 @@
 import React, {useCallback, useEffect, useState} from 'react';
 import {Check, LoaderCircle, X} from 'lucide-react';
 import {Badge} from './results.jsx';
-import {buildDecision, fixTitle, levelRows, needsPolling, primaryAction, statusLabel} from './fixes-logic.js';
+import {buildDecision, fixTitle, levelRows, stepCounts, needsPolling, primaryAction, statusLabel} from './fixes-logic.js';
 
 const API = '/api';
 const POLL_MS = 1500;
@@ -43,8 +43,13 @@ function FixResult({run}) {
       </div></>}
     <div className="fix-checks">
       {run.build && <span>Build check <Badge tone={RESULT_TONE[run.build.status] || 'neutral'}>{run.build.status}</Badge> {run.build.detail}</span>}
-      {run.tests && <span>Tests <Badge tone={RESULT_TONE[run.tests.status] || 'neutral'}>{run.tests.status.replace('_', ' ')}</Badge> {run.tests.reason}</span>}
+      {run.app_build && <span>Build <Badge tone={RESULT_TONE[run.app_build.status] || 'neutral'}>{run.app_build.status.replace('_', ' ')}</Badge> {run.app_build.reason}</span>}
+      {run.tests && <span>Tests <Badge tone={RESULT_TONE[run.tests.status] || 'neutral'}>{run.tests.status.replace('_', ' ')}</Badge> {stepCounts(run.tests) || run.tests.reason}</span>}
     </div>
+    {[run.app_build, run.tests].map((step, i) => step && step.status === 'failed' && <div key={i}>
+      {step.failed_tests.length > 0 && <><strong>Failing tests</strong><ul className="fix-list">{step.failed_tests.map(n => <li key={n}>{n}</li>)}</ul></>}
+      <details><summary>Output (last {step.output_tail.length} lines)</summary><pre className="fix-output">{step.output_tail.join('\n')}</pre></details>
+    </div>)}
   </div>;
 }
 

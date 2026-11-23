@@ -8,7 +8,6 @@ from guardian.remediate.sandbox import (
     apply_upgrade,
     build_check,
     create_sandbox,
-    run_tests,
 )
 
 
@@ -130,48 +129,3 @@ def test_python_build_check_resolves_with_wheels_only(tmp_path: Path) -> None:
     assert build_check(tmp_path, _target("pypi", "flask", "1", "2"), runner).status == "passed"
     command = runner.calls[0][0]
     assert "--only-binary=:all:" in command and "--dry-run" in command
-
-
-def test_tests_not_run_without_source(tmp_path: Path) -> None:
-    _write(tmp_path, "package.json", json.dumps({"scripts": {"test": "jest"}}))
-    result = run_tests(tmp_path, FakeRunner(), engine="docker")
-    assert result.status == "not_run"
-    assert result.reason == "only manifests were fetched; no source to test"
-
-
-def test_tests_not_run_without_a_test_script(tmp_path: Path) -> None:
-    _write(tmp_path, "package.json", json.dumps({"scripts": {"start": "node a.js"}}))
-    _write(tmp_path, "src/a.js", "1")
-    result = run_tests(tmp_path, FakeRunner(), engine="docker")
-    assert result.status == "not_run" and "no test script" in result.reason
-
-
-def test_tests_not_run_without_a_container_engine(tmp_path: Path) -> None:
-    _write(tmp_path, "package.json", json.dumps({"scripts": {"test": "jest"}}))
-    _write(tmp_path, "src/a.js", "1")
-    runner = FakeRunner()
-    result = run_tests(tmp_path, runner, engine=None)
-    assert result.status == "not_run" and "container engine" in result.reason
-    assert runner.calls == []
-
-
-def test_tests_run_only_in_an_isolated_container(tmp_path: Path) -> None:
-    _write(tmp_path, "package.json", json.dumps({"scripts": {"test": "jest"}}))
-    _write(tmp_path, "src/a.js", "1")
-    runner = FakeRunner(OK, OK)
-    result = run_tests(tmp_path, runner, engine="docker")
-    assert result.status == "passed"
-    install, test = (call[0] for call in runner.calls)
-    assert install[0] == "docker" and "--ignore-scripts" in install
-    assert "--network" in test and test[test.index("--network") + 1] == "none"
-    assert "--read-only" in test and f"{tmp_path}:/work:ro" in test
-    assert {"--memory", "--cpus", "--pids-limit"} <= set(test)
-    assert test[-2:] == ["npm", "test"]
-
-
-def test_failing_tests_report_the_output_tail(tmp_path: Path) -> None:
-    _write(tmp_path, "package.json", json.dumps({"scripts": {"test": "jest"}}))
-    _write(tmp_path, "src/a.js", "1")
-    runner = FakeRunner(OK, CommandResult(1, "1 test failed"))
-    result = run_tests(tmp_path, runner, engine="docker")
-    assert result.status == "failed" and "1 test failed" in result.reason

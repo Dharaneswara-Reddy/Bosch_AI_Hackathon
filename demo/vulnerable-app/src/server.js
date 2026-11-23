@@ -1,16 +1,38 @@
 // Deliberately vulnerable demo app for the Guardian. Do not deploy.
 // It imports express-jwt, which pulls in an old jsonwebtoken (a reachable, transitive CVE).
-// lodash is declared but never imported here; minimist is a dev dependency only.
+// lodash (src/stats.js) is imported but only used for order statistics; minimist is dev-only.
 const http = require('http');
 const expressJwt = require('express-jwt');
+const { summarize } = require('./stats');
 
-const checkToken = expressJwt({ secret: 'demo-only-not-a-real-secret' });
+const DEMO_SECRET = 'demo-only-not-a-real-secret';
+const ORDERS = [
+  { customer: 'acme', amount: 120 },
+  { customer: 'acme', amount: 80 },
+  { customer: 'globex', amount: 45 },
+];
 
-const server = http.createServer((req, res) => {
-  checkToken(req, res, (err) => {
-    res.writeHead(err ? 401 : 200, { 'Content-Type': 'text/plain' });
-    res.end(err ? 'Unauthorized\n' : 'Hello from the Guardian demo app\n');
+function respond(res, status, type, body) {
+  res.writeHead(status, { 'Content-Type': type });
+  res.end(body);
+}
+
+function createServer(secret = DEMO_SECRET) {
+  const checkToken = expressJwt({ secret });
+  return http.createServer((req, res) => {
+    if (req.url === '/health') return respond(res, 200, 'text/plain', 'ok\n');
+    return checkToken(req, res, (err) => {
+      if (err) return respond(res, 401, 'text/plain', 'Unauthorized\n');
+      if (req.url === '/summary') {
+        return respond(res, 200, 'application/json', JSON.stringify(summarize(ORDERS)));
+      }
+      return respond(res, 200, 'text/plain', 'Hello from the Guardian demo app\n');
+    });
   });
-});
+}
 
-server.listen(3000, '127.0.0.1');
+module.exports = { createServer, DEMO_SECRET };
+
+if (require.main === module) {
+  createServer().listen(3000, '127.0.0.1');
+}
