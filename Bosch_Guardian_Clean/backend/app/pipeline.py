@@ -1,18 +1,24 @@
 """Fetch selected files, prepare lockfiles and run the Guardian scan in a worker thread."""
 
+import hashlib
 import json
+import os
+import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Final
 from uuid import uuid4
 
 from guardian import runner
+from guardian.ai.llm import read_env_file
 from guardian.fetch import (
     MANIFEST_NAME,
+    FetchedFile,
     FetchError,
     FetchResult,
     fetch_repo_files,
     parse_github_url,
+    write_manifest,
 )
 from guardian.models import RunResult
 from guardian.prepare import generate_npm_lockfiles
@@ -20,6 +26,23 @@ from guardian.prepare import generate_npm_lockfiles
 from .schemas import FetchSummary, ScanRecord, ScanResult
 
 SCANS: Final[dict[str, ScanRecord]] = {}
+REPO_ROOT: Final = Path(__file__).resolve().parents[3]
+FAKE_CLAIM: Final = REPO_ROOT / "tests" / "fixtures" / "fake_cve_claim.json"
+DEMO_APP: Final = REPO_ROOT / "demo" / "vulnerable-app"
+DEMO_LABEL: Final = "Built-in demo app (demo/vulnerable-app, local, no network)"
+DEMO_FILES: Final = frozenset({"package.json", "package-lock.json", "ci.yml"})
+
+
+def load_root_env(path: Path = REPO_ROOT / ".env") -> None:
+    """Load the repository-root ``.env`` once; real environment variables win."""
+    for key, value in read_env_file(path).items():
+        os.environ.setdefault(key, value)
+
+
+def ai_enabled() -> bool:
+    """AI agents run only when a provider and its key are configured."""
+    provider = os.environ.get("GUARDIAN_LLM_PROVIDER", "none").strip().lower()
+    return provider not in ("", "none") and bool(os.environ.get("GUARDIAN_LLM_API_KEY", "").strip())
 
 
 def create_record(url: str, ref: str, base: Path) -> ScanRecord:
@@ -31,6 +54,29 @@ def create_record(url: str, ref: str, base: Path) -> ScanRecord:
     )
     SCANS[scan_id] = record
     return record
+
+
+def create_demo_record(base: Path) -> ScanRecord:
+    scan_id = uuid4().hex
+    record = ScanRecord(scan_id=scan_id, repository_url=DEMO_LABEL, ref="local", demo=True,
+                        created_at=datetime.now(UTC), work_dir=base / scan_id)
+    SCANS[scan_id] = record
+    return record
+
+
+def prepare_demo(repo_dir: Path) -> FetchResult:
+    """Copy the local demo app (source included, so reachability can be checked)."""
+    shutil.copytree(DEMO_APP, repo_dir, ignore=shutil.ignore_patterns("node_modules"))
+    files = [
+        FetchedFile(path=path.relative_to(repo_dir).as_posix(), size=path.stat().st_size,
+                    sha256=hashlib.sha256(path.read_bytes()).hexdigest())
+        for path in sorted(repo_dir.rglob("*"))
+        if path.is_file() and path.name in DEMO_FILES and "vendor" not in path.parts
+    ]
+    result = FetchResult(url=DEMO_LABEL, ref="local", commit_sha="local-demo", dest=repo_dir,
+                         files=files)
+    write_manifest(result)
+    return result
 
 
 def _fail(record: ScanRecord, message: str) -> None:
@@ -46,21 +92,32 @@ def _apply_result(record: ScanRecord, result: RunResult) -> None:
     record.stage = "done"
 
 
-def run_pipeline(record: ScanRecord, token: str | None) -> None:
+def _fetch_and_prepare(record: ScanRecord, repo_dir: Path, token: str | None) -> bool:
+    record.stage = "fetching"
+    fetched = fetch_repo_files(record.repository_url, record.ref, repo_dir, token)
+    record.commit_sha, record.ref = fetched.commit_sha, fetched.ref
+    record.stage = "preparing"
+    prepared = generate_npm_lockfiles(fetched)
+    record.errors.update(prepared.errors)
+    if not prepared.files:
+        _fail(record, "No dependency manifests or lockfiles found in the repository")
+        return False
+    return True
+
+
+def run_pipeline(record: ScanRecord, token: str | None, inject_fake_claim: bool = False) -> None:
     repo_dir = record.work_dir / "repo"
     out_dir = record.work_dir / "out"
     try:
-        record.stage = "fetching"
-        fetched = fetch_repo_files(record.repository_url, record.ref, repo_dir, token)
-        record.commit_sha, record.ref = fetched.commit_sha, fetched.ref
-        record.stage = "preparing"
-        prepared = generate_npm_lockfiles(fetched)
-        record.errors.update(prepared.errors)
-        if not prepared.files:
-            _fail(record, "No dependency manifests or lockfiles found in the repository")
+        if record.demo:
+            record.stage = "preparing"
+            record.commit_sha = prepare_demo(repo_dir).commit_sha
+        elif not _fetch_and_prepare(record, repo_dir, token):
             return
         record.stage = "scanning"
-        _apply_result(record, runner.scan(repo_dir, out_dir, use_llm=False))
+        inject = FAKE_CLAIM if inject_fake_claim else None
+        result = runner.scan(repo_dir, out_dir, use_llm=ai_enabled(), inject_claim=inject)
+        _apply_result(record, result)
     except FetchError as error:
         _fail(record, str(error))
     except Exception as error:  # noqa: BLE001 - worker boundary: report, never lose the failure
@@ -89,5 +146,6 @@ def load_result(record: ScanRecord) -> ScanResult:
         counts[finding.risk_level.value] = counts.get(finding.risk_level.value, 0) + 1
     return ScanResult(
         scan=run.scan, findings=run.findings, evidence=run.evidence, coverage=run.coverage,
-        counts_by_risk=counts, fetch=_fetch_summary(record),
+        counts_by_risk=counts, fetch=_fetch_summary(record), claims=run.claims,
+        agent_trace=run.agent_trace,
     )

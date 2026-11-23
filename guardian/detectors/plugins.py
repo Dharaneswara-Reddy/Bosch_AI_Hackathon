@@ -8,7 +8,15 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from guardian.detectors import ci_pin, git_diff, image_pin, install_script, sbom_diff, typosquat
+from guardian.detectors import (
+    ci_pin,
+    git_diff,
+    image_pin,
+    install_script,
+    sbom_diff,
+    typosquat,
+    unverified_source,
+)
 from guardian.detectors._common import (
     DetectionResult,
     DetectorContext,
@@ -104,6 +112,18 @@ def _git_lockfile(target: Path, commit: str, relative: str) -> dict[str, object]
         return {"packages": {}}
     parsed = json.loads(completed.stdout.decode("utf-8"))
     return parsed if isinstance(parsed, dict) else {"packages": {}}
+
+
+def _npm_lockfiles(root: Path) -> list[Path]:
+    return sorted(
+        path for path in root.rglob("package-lock.json")
+        if path.is_file() and not ({".git", "node_modules", "artifacts"} & set(path.parts))
+    )
+
+
+def _run_unverified_source(context: DetectorContext) -> DetectionResult:
+    root = context.target_path
+    return unverified_source.detect(root, _npm_lockfiles(root) if root is not None else [])
 
 
 def _run_install_script(context: DetectorContext) -> DetectionResult:
@@ -253,4 +273,5 @@ __all__ = [
     "_run_install_script",
     "_run_sbom_diff",
     "_run_typosquat",
+    "_run_unverified_source",
 ]

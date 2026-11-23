@@ -9,6 +9,7 @@ from guardian.detectors.plugins import (
     _run_install_script,
     _run_sbom_diff,
     _run_typosquat,
+    _run_unverified_source,
 )
 
 DETECTORS: dict[str, list[DetectorPlugin]] = {
@@ -21,6 +22,7 @@ DETECTORS: dict[str, list[DetectorPlugin]] = {
     "npm": [
         DetectorPlugin("typosquat", _run_typosquat),
         DetectorPlugin("install_script", _run_install_script),
+        DetectorPlugin("unverified_source", _run_unverified_source),
     ],
 }
 

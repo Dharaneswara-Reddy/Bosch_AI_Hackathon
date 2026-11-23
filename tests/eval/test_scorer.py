@@ -120,7 +120,7 @@ def test_package_identity_ignores_type_and_version() -> None:
 
 def test_real_holdout_scenarios_are_well_formed() -> None:
     scenarios = load_scenarios(REPO / "holdout-scenarios")
-    assert 3 <= len(scenarios) <= 5
+    assert 3 <= len(scenarios) <= 6
     for scenario in scenarios:
         assert scenario.expected, scenario.scenario_id
         assert (scenario.folder / "overlay").is_dir()

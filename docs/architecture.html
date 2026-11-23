@@ -1,0 +1,520 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Supply Chain Guardian Explained</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=Space+Grotesk:wght@500;700&display=swap">
+<style>
+/* Layout: one reading column, two views (Overview / Architecture) switched by tabs; the architecture view is a numbered diagram followed by matching numbered step cards. */
+:root {
+  --bg: #f4f6f8;
+  --surface: #ffffff;
+  --sunk: #e9edf1;
+  --fg: #15212c;
+  --muted: #566573;
+  --line: #c9d3dc;
+  --accent: #0d6b75;
+  --accent-soft: #d9eef0;
+  --ai: #9a5b00;
+  --ai-soft: #fbecd2;
+  --ok: #1d7a3e;
+  --ok-soft: #dcf1e3;
+  --bad: #b3261e;
+  --bad-soft: #fbe2df;
+  --display: "Space Grotesk", "Segoe UI", system-ui, sans-serif;
+  --body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f161c; --surface: #17212a; --sunk: #1e2a34; --fg: #e3eaf0; --muted: #98a8b6; --line: #34444f;
+    --accent: #5cc3cd; --accent-soft: #143a3f; --ai: #f0b35a; --ai-soft: #3a2a12;
+    --ok: #6fd393; --ok-soft: #173826; --bad: #ff8a80; --bad-soft: #42201d;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f161c; --surface: #17212a; --sunk: #1e2a34; --fg: #e3eaf0; --muted: #98a8b6; --line: #34444f;
+  --accent: #5cc3cd; --accent-soft: #143a3f; --ai: #f0b35a; --ai-soft: #3a2a12;
+  --ok: #6fd393; --ok-soft: #173826; --bad: #ff8a80; --bad-soft: #42201d;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font-family: var(--body); font-size: 16px; line-height: 1.55; }
+.wrap { max-width: 960px; margin: 0 auto; padding-block: 36px 80px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; gap: 40px; }
+h1, h2, h3 { font-family: var(--display); line-height: 1.15; text-wrap: balance; margin: 0; }
+h1 { font-size: clamp(1.9rem, 5vw, 2.6rem); }
+h2 { font-size: 1.45rem; }
+h3 { font-size: 1.05rem; }
+p { margin: 0; max-width: 68ch; }
+a { color: var(--accent); }
+code { font-family: var(--mono); font-size: 0.85em; background: var(--sunk); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+.eyebrow { font: 600 0.72rem var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent); }
+.lead { font-size: 1.08rem; color: var(--muted); }
+section { display: grid; gap: 16px; min-width: 0; }
+.view { display: grid; gap: 48px; }
+
+.tabs { display: flex; gap: 6px; flex-wrap: wrap; border-bottom: 1px solid var(--line); }
+.tabs a { font: 600 0.95rem var(--display); color: var(--muted); text-decoration: none; padding: 10px 14px; border-bottom: 3px solid transparent; margin-bottom: -1px; }
+.tabs a[aria-current="page"] { color: var(--accent); border-color: var(--accent); }
+.tabs a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.qs { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+.q { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; display: grid; gap: 4px; align-content: start; }
+.q b { font-family: var(--display); }
+.q span { color: var(--muted); font-size: 0.93rem; }
+
+.steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; counter-reset: s; }
+.steps li { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 12px; align-items: start; }
+.steps li::before { counter-increment: s; content: counter(s); width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; font: 700 0.95rem var(--display); background: var(--accent-soft); color: var(--accent); }
+.steps li.ai::before { background: var(--ai-soft); color: var(--ai); }
+.steps b { font-family: var(--display); }
+.steps span { color: var(--muted); }
+
+.tbl { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 0.9rem; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font: 600 0.72rem var(--mono); text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); background: var(--sunk); }
+tr:last-child td { border-bottom: 0; }
+td.mono { font-family: var(--mono); font-size: 0.85rem; white-space: nowrap; }
+.lvl { font: 600 0.72rem var(--mono); padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+.lvl.c { background: var(--bad); color: var(--surface); }
+.lvl.h { background: var(--bad-soft); color: var(--bad); }
+.lvl.m { background: var(--ai-soft); color: var(--ai); }
+.lvl.l { background: var(--sunk); color: var(--muted); }
+.note { color: var(--muted); font-size: 0.92rem; }
+
+.two { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+.box { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; display: grid; gap: 8px; align-content: start; min-width: 0; }
+.box h3 { font-size: 1rem; }
+.box ul { margin: 0; padding-left: 18px; display: grid; gap: 6px; font-size: 0.93rem; }
+.box.good h3 { color: var(--ok); }
+.box.warn h3 { color: var(--bad); }
+
+.gloss { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; }
+.term { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 11px 14px; display: grid; gap: 2px; align-content: start; }
+.term b { font-family: var(--mono); font-size: 0.88rem; color: var(--accent); }
+.term span { font-size: 0.9rem; color: var(--muted); }
+
+figure { margin: 0; display: grid; gap: 10px; min-width: 0; }
+.diagram { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
+.diagram svg { display: block; width: 100%; min-width: 720px; height: auto; color: var(--fg); }
+figcaption { font-size: 0.9rem; color: var(--muted); max-width: 72ch; }
+.legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 0.85rem; color: var(--muted); }
+.legend i { display: inline-block; width: 14px; height: 14px; border-radius: 3px; margin-right: 6px; vertical-align: -2px; border: 2px solid var(--accent); background: var(--surface); }
+.legend i.ai { border-color: var(--ai); background: var(--ai-soft); }
+.legend i.ext { border: 2px dashed var(--muted); background: var(--bg); }
+
+svg .core { fill: var(--surface); stroke: var(--accent); stroke-width: 2; }
+svg .ai { fill: var(--ai-soft); stroke: var(--ai); stroke-width: 2; }
+svg .ext { fill: var(--bg); stroke: var(--muted); stroke-width: 1.5; stroke-dasharray: 5 4; }
+svg .zone { fill: none; stroke: var(--line); stroke-width: 1.5; stroke-dasharray: 8 6; }
+svg .out { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 2; }
+svg .num { fill: var(--accent); }
+svg .num.a { fill: var(--ai); }
+svg .numt { fill: var(--surface); font: 700 12px var(--display); }
+svg .t { fill: var(--fg); font: 600 13px var(--body); }
+svg .s { fill: var(--muted); font: 400 11.5px var(--body); }
+svg .lab { fill: var(--muted); font: 500 11px var(--mono); }
+svg .zl { fill: var(--muted); font: 600 11px var(--mono); letter-spacing: 0.08em; }
+svg .bd { stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 3 4; }
+svg .bdl { fill: var(--accent); font: 600 11px var(--mono); }
+svg .w { stroke: currentColor; stroke-width: 1.5; fill: none; }
+svg .wd { stroke: var(--muted); stroke-width: 1.3; fill: none; stroke-dasharray: 4 3; }
+svg .ah { fill: currentColor; }
+svg .ahd { fill: var(--muted); }
+
+.cards { display: grid; gap: 12px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; display: grid; grid-template-columns: 38px minmax(0, 1fr); gap: 14px; }
+.card .n { width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center; font: 700 1rem var(--display); background: var(--accent); color: var(--surface); }
+.card.ai .n { background: var(--ai); }
+.card .body { display: grid; gap: 8px; min-width: 0; }
+.card .head { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: baseline; justify-content: space-between; }
+.card .file { font: 500 0.78rem var(--mono); color: var(--muted); overflow-wrap: anywhere; }
+.io { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 0.85rem; }
+.chip { font: 0.76rem var(--mono); padding: 3px 8px; border-radius: 6px; background: var(--sunk); white-space: nowrap; }
+.chip.o { background: var(--accent-soft); color: var(--accent); }
+.card.ai .chip.o { background: var(--ai-soft); color: var(--ai); }
+.io .to { color: var(--muted); }
+.why { font-size: 0.92rem; border-left: 3px solid var(--accent); padding-left: 10px; color: var(--muted); }
+.card.ai .why { border-color: var(--ai); }
+pre { margin: 0; font: 0.78rem/1.5 var(--mono); background: var(--sunk); padding: 9px 12px; border-radius: 8px; overflow-x: auto; white-space: pre; }
+.band { border: 2px dashed var(--accent); background: var(--accent-soft); border-radius: 10px; padding: 10px 14px; font-size: 0.93rem; }
+.band b { color: var(--accent); font-family: var(--display); }
+@media (max-width: 520px) { .card { grid-template-columns: minmax(0, 1fr); } }
+</style>
+
+<div class="wrap">
+
+<header style="display:grid;gap:14px">
+  <div class="eyebrow">Bosch hackathon · what we built · 23 Nov 2026</div>
+  <h1>Software Supply Chain Guardian</h1>
+  <p class="lead">Paste a GitHub link. The Guardian lists every library the app depends on, finds the ones with known security holes or suspicious changes, rates each one, and attaches proof from a real tool to every finding.</p>
+  <nav class="tabs" aria-label="Views">
+    <a href="#overview" data-view="overview">Overview</a>
+    <a href="#architecture" data-view="architecture">Architecture, step by step</a>
+  </nav>
+</header>
+
+<div class="view" id="overview">
+
+<section>
+  <h2>Three questions it answers</h2>
+  <div class="qs">
+    <div class="q"><b>What is in the app?</b><span>Every library, its exact version, and the chain of libraries that pulled it in.</span></div>
+    <div class="q"><b>What changed?</b><span>New libraries, new install scripts, unpinned Docker images and CI steps.</span></div>
+    <div class="q"><b>What looks risky?</b><span>Known security holes (CVEs), rated Critical to Low, each with a fix version and proof.</span></div>
+  </div>
+</section>
+
+<section>
+  <h2>How it works, in one minute</h2>
+  <ol class="steps">
+    <li><div><b>Get the dependency files.</b> <span>From a GitHub link it downloads only the files that list libraries (lockfiles, Dockerfiles, CI files). No full clone.</span></div></li>
+    <li><div><b>Make the ingredients list.</b> <span>Syft writes an SBOM: every library with a universal name tag (purl), for any language.</span></div></li>
+    <li><div><b>Draw the family tree.</b> <span>Who pulled in whom, so each problem shows the path from your app to the bad library.</span></div></li>
+    <li><div><b>Look for problems.</b> <span>Two scanners (Grype and OSV) check for known holes. Six small checks look for suspicious changes.</span></div></li>
+    <li><div><b>Rate each finding.</b> <span>A fixed rule table gives Critical, High, Medium or Low. Same input, same answer, every time.</span></div></li>
+    <li class="ai"><div><b>Explain it (optional AI).</b> <span>An AI writes plain-English explanations. Code checks every claim and rejects anything without proof.</span></div></li>
+    <li><div><b>Show the report.</b> <span>The web page shows the results. JSON files keep the full record for machines.</span></div></li>
+  </ol>
+  <p><a href="#architecture" data-view="architecture">See the architecture diagram and every step in detail →</a></p>
+</section>
+
+<section>
+  <h2>Real results</h2>
+  <p>Two deliberately vulnerable open-source apps, scanned with the same command.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>App</th><th>Language</th><th>Libraries</th><th>Links in tree</th><th>Findings</th><th>Example</th></tr></thead>
+    <tbody>
+      <tr><td>OWASP Juice Shop <code>c9f9922</code></td><td>JavaScript (npm)</td><td>1,141</td><td>2,025</td><td>66 (53 CVEs, 13 suspicious)</td><td><code>jsonwebtoken 0.4.0</code> · CVE-2015-9235 · <span class="lvl c">Critical</span> · confirmed by both scanners</td></tr>
+      <tr><td>OWASP RailsGoat</td><td>Ruby (gems)</td><td>–</td><td>407</td><td>262</td><td>app → importmap-rails → actionpack → rack-session</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section>
+  <h2>How a risk level is chosen</h2>
+  <p>Rules are read top to bottom and the first match wins. Each finding records its rule ID, so anyone can see why it got its level.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Rule</th><th>When it matches</th><th>Level</th></tr></thead>
+    <tbody>
+      <tr><td class="mono">R-MAL</td><td>Known malicious package (OSV <code>MAL-</code> entry)</td><td><span class="lvl c">Critical</span></td></tr>
+      <tr><td class="mono">R-CVE-1 … 4</td><td>CVE with Critical / High / Medium / Low severity</td><td><span class="lvl c">Critical</span> to <span class="lvl l">Low</span></td></tr>
+      <tr><td class="mono">R-CVE-U</td><td>CVE with unknown severity (marked under investigation)</td><td><span class="lvl m">Medium</span></td></tr>
+      <tr><td class="mono">R-AN-1</td><td>Look-alike package name, or an install script added</td><td><span class="lvl h">High</span></td></tr>
+      <tr><td class="mono">R-AN-2</td><td>Unexpected new library, or Docker image on <code>latest</code></td><td><span class="lvl m">Medium</span></td></tr>
+      <tr><td class="mono">R-AN-3</td><td>Version bump, or CI step not pinned to an exact commit</td><td><span class="lvl l">Low</span></td></tr>
+    </tbody>
+  </table></div>
+  <p class="note">A library used only by developers (not shipped) drops one level. A fuzzy name match lowers confidence. The tool never says "safe".</p>
+</section>
+
+<section>
+  <h2>Why you can trust it</h2>
+  <div class="two">
+    <div class="box good"><h3>Guardrails</h3><ul>
+      <li>Every finding points to the exact spot in a scanner's raw, untouched output, with a file fingerprint (sha256).</li>
+      <li>Two scanners. When both agree, the finding says <code>confirmed_by: grype, osv</code>.</li>
+      <li>Risk comes from fixed rules, never from the AI.</li>
+      <li>The AI can only explain. A fake CVE planted in its answer is rejected, with the reason shown.</li>
+      <li>Text inside the scanned repo is treated as untrusted data, so planted instructions do nothing.</li>
+      <li>The scan works fully with the AI switched off.</li>
+    </ul></div>
+    <div class="box warn"><h3>Known limits today</h3><ul>
+      <li>Tested end to end on npm and Ruby. Other languages go through the same path but are not yet demoed.</li>
+      <li>Look-alike name and install-script checks are npm only.</li>
+      <li>OSV needs internet at scan time. Grype works offline.</li>
+      <li>"What changed" needs git history, so it works from the command line, not yet from a pasted link.</li>
+      <li>Juice Shop has no lockfile on GitHub, so a pasted link finds fewer libraries than a local scan.</li>
+      <li>"Is the bad code actually called?" is not checked yet.</li>
+    </ul></div>
+  </div>
+</section>
+
+<section>
+  <h2>Short forms</h2>
+  <div class="gloss">
+    <div class="term"><b>SBOM</b><span>Software Bill of Materials: the ingredients list of an app.</span></div>
+    <div class="term"><b>purl</b><span>A universal name tag for a library, e.g. pkg:npm/express@4.21.0.</span></div>
+    <div class="term"><b>CycloneDX</b><span>A standard file format for SBOMs.</span></div>
+    <div class="term"><b>Lockfile</b><span>File that pins every exact version, e.g. package-lock.json, Gemfile.lock.</span></div>
+    <div class="term"><b>CVE / GHSA</b><span>Public IDs for a known security hole. One hole can have both.</span></div>
+    <div class="term"><b>Direct / transitive</b><span>Direct: your app chose it. Transitive: another library pulled it in.</span></div>
+    <div class="term"><b>Evidence</b><span>A pointer to the exact place in a tool's raw output that backs a finding.</span></div>
+    <div class="term"><b>Validator</b><span>Plain code that checks every AI claim against the evidence.</span></div>
+    <div class="term"><b>Pinning</b><span>Referring to an image or CI step by exact hash so it cannot change silently.</span></div>
+  </div>
+</section>
+</div>
+
+<div class="view" id="architecture" hidden>
+
+<section>
+  <h2>Architecture</h2>
+  <p>Read top to bottom. Each numbered box matches a numbered card below. Solid boxes are our code; dashed boxes are outside tools we call.</p>
+  <div class="legend">
+    <span><i></i>Our code</span>
+    <span><i class="ai"></i>Optional AI step</span>
+    <span><i class="ext"></i>Outside tool or service</span>
+  </div>
+  <figure>
+    <div class="diagram">
+      <svg viewBox="0 0 960 1060" role="img" aria-label="Guardian architecture: the web UI sends a GitHub link to the API server, which fetches only dependency files from GitHub, then runs the scan pipeline (resolve, SBOM with Syft, graph, Grype and OSV scanners plus six detectors, merge and risk rules, optional AI review with a code validator, report) and writes result files that the UI reads back. The command line can start the pipeline directly on a local folder.">
+        <defs>
+          <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah" d="M0,0 L10,5 L0,10 z"/></marker>
+          <marker id="ard" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ahd" d="M0,0 L10,5 L0,10 z"/></marker>
+        </defs>
+
+        <rect class="core" x="300" y="20" width="360" height="58" rx="8"/>
+        <circle class="num" cx="300" cy="20" r="12"/><text class="numt" x="300" y="24" text-anchor="middle">1</text>
+        <text class="t" x="480" y="44" text-anchor="middle">Web UI (React)</text>
+        <text class="s" x="480" y="63" text-anchor="middle">You paste a GitHub URL and a branch, tag or commit</text>
+        <line class="w" x1="480" y1="78" x2="480" y2="108" marker-end="url(#ar)"/>
+        <text class="lab" x="490" y="98">POST /scan</text>
+
+        <rect class="core" x="300" y="110" width="360" height="58" rx="8"/>
+        <circle class="num" cx="300" cy="110" r="12"/><text class="numt" x="300" y="114" text-anchor="middle">2</text>
+        <text class="t" x="480" y="134" text-anchor="middle">API server (FastAPI)</text>
+        <text class="s" x="480" y="153" text-anchor="middle">Returns a scan ID at once, runs the scan in the background</text>
+        <line class="w" x1="480" y1="168" x2="480" y2="198" marker-end="url(#ar)"/>
+        <text class="lab" x="490" y="188">URL + ref</text>
+
+        <rect class="core" x="300" y="200" width="360" height="58" rx="8"/>
+        <circle class="num" cx="300" cy="200" r="12"/><text class="numt" x="300" y="204" text-anchor="middle">3</text>
+        <text class="t" x="480" y="224" text-anchor="middle">Fetch dependency files</text>
+        <text class="s" x="480" y="243" text-anchor="middle">Lockfiles, manifests, Dockerfiles, CI files only. No clone</text>
+        <rect class="ext" x="740" y="200" width="200" height="58" rx="8"/>
+        <text class="t" x="840" y="224" text-anchor="middle">GitHub API</text>
+        <text class="s" x="840" y="243" text-anchor="middle">exact commit + files</text>
+        <line class="wd" x1="738" y1="229" x2="662" y2="229" marker-end="url(#ard)"/>
+
+        <rect class="zone" x="270" y="282" width="420" height="680" rx="14"/>
+        <text class="zl" x="284" y="302">SCAN PIPELINE · guardian/runner.py</text>
+        <line class="w" x1="480" y1="258" x2="480" y2="318" marker-end="url(#ar)"/>
+        <text class="lab" x="490" y="276">files on disk</text>
+
+        <rect class="core" x="40" y="320" width="190" height="58" rx="8"/>
+        <text class="t" x="135" y="344" text-anchor="middle">Command line</text>
+        <text class="s" x="135" y="363" text-anchor="middle">guardian scan ./folder</text>
+        <line class="w" x1="230" y1="349" x2="298" y2="349" marker-end="url(#ar)"/>
+        <text class="lab" x="236" y="341">local</text>
+
+        <rect class="core" x="300" y="320" width="360" height="58" rx="8"/>
+        <circle class="num" cx="300" cy="320" r="12"/><text class="numt" x="300" y="324" text-anchor="middle">4</text>
+        <text class="t" x="480" y="344" text-anchor="middle">Resolve</text>
+        <text class="s" x="480" y="363" text-anchor="middle">Read each lockfile, list who depends on whom</text>
+        <line class="w" x1="480" y1="378" x2="480" y2="408" marker-end="url(#ar)"/>
+        <text class="lab" x="490" y="398">edges</text>
+
+        <rect class="core" x="300" y="410" width="360" height="58" rx="8"/>
+        <circle class="num" cx="300" cy="410" r="12"/><text class="numt" x="300" y="414" text-anchor="middle">5</text>
+        <text class="t" x="480" y="434" text-anchor="middle">Build SBOM</text>
+        <text class="s" x="480" y="453" text-anchor="middle">Every library with a purl, saved as CycloneDX</text>
+        <rect class="ext" x="740" y="410" width="200" height="58" rx="8"/>
+        <text class="t" x="840" y="434" text-anchor="middle">Syft (Docker)</text>
+        <text class="s" x="840" y="453" text-anchor="middle">pinned by digest</text>
+        <line class="wd" x1="738" y1="439" x2="662" y2="439" marker-end="url(#ard)"/>
+
+        <line class="bd" x1="280" y1="486" x2="680" y2="486"/>
+        <text class="bdl" x="40" y="478">BELOW THIS LINE:</text>
+        <text class="bdl" x="40" y="494">only purls, any language</text>
+        <line class="w" x1="480" y1="468" x2="480" y2="508" marker-end="url(#ar)"/>
+        <text class="lab" x="490" y="502">sbom.cdx.json</text>
+
+        <rect class="core" x="300" y="510" width="360" height="58" rx="8"/>
+        <circle class="num" cx="300" cy="510" r="12"/><text class="numt" x="300" y="514" text-anchor="middle">6</text>
+        <text class="t" x="480" y="534" text-anchor="middle">Dependency graph</text>
+        <text class="s" x="480" y="553" text-anchor="middle">Shortest path from the app to every library</text>
+        <line class="w" x1="385" y1="568" x2="385" y2="598" marker-end="url(#ar)"/>
+        <line class="w" x1="575" y1="568" x2="575" y2="598" marker-end="url(#ar)"/>
+
+        <rect class="core" x="300" y="600" width="170" height="58" rx="8"/>
+        <circle class="num" cx="300" cy="600" r="12"/><text class="numt" x="300" y="604" text-anchor="middle">7</text>
+        <text class="t" x="385" y="624" text-anchor="middle">CVE scanners</text>
+        <text class="s" x="385" y="643" text-anchor="middle">Grype + OSV</text>
+        <rect class="core" x="490" y="600" width="170" height="58" rx="8"/>
+        <circle class="num" cx="490" cy="600" r="12"/><text class="numt" x="490" y="604" text-anchor="middle">8</text>
+        <text class="t" x="575" y="624" text-anchor="middle">6 detectors</text>
+        <text class="s" x="575" y="643" text-anchor="middle">suspicious changes</text>
+        <rect class="ext" x="740" y="560" width="200" height="44" rx="8"/>
+        <text class="t" x="840" y="580" text-anchor="middle">Grype database</text>
+        <text class="s" x="840" y="596" text-anchor="middle">local, works offline</text>
+        <rect class="ext" x="740" y="654" width="200" height="44" rx="8"/>
+        <text class="t" x="840" y="674" text-anchor="middle">api.osv.dev</text>
+        <text class="s" x="840" y="690" text-anchor="middle">live, needs internet</text>
+        <path class="wd" d="M738,582 H710 V590 H385 V598" marker-end="url(#ard)"/>
+        <path class="wd" d="M738,676 H710 V668 H430 V660" marker-end="url(#ard)"/>
+        <line class="w" x1="385" y1="658" x2="385" y2="688" marker-end="url(#ar)"/>
+        <line class="w" x1="575" y1="658" x2="575" y2="688" marker-end="url(#ar)"/>
+        <text class="lab" x="480" y="684" text-anchor="middle">findings</text>
+
+        <rect class="core" x="300" y="690" width="360" height="58" rx="8"/>
+        <circle class="num" cx="300" cy="690" r="12"/><text class="numt" x="300" y="694" text-anchor="middle">9</text>
+        <text class="t" x="480" y="714" text-anchor="middle">Merge duplicates, then rate risk</text>
+        <text class="s" x="480" y="733" text-anchor="middle">Same hole from two scanners = one finding. Fixed rules</text>
+        <line class="w" x1="480" y1="748" x2="480" y2="778" marker-end="url(#ar)"/>
+        <text class="lab" x="490" y="768">top 20 findings</text>
+
+        <rect class="ai" x="300" y="780" width="360" height="58" rx="8"/>
+        <circle class="num a" cx="300" cy="780" r="12"/><text class="numt" x="300" y="784" text-anchor="middle">10</text>
+        <text class="t" x="480" y="804" text-anchor="middle">AI review + validator (optional)</text>
+        <text class="s" x="480" y="823" text-anchor="middle">AI explains; code rejects any claim without proof</text>
+        <rect class="ext" x="740" y="780" width="200" height="58" rx="8"/>
+        <text class="t" x="840" y="804" text-anchor="middle">LLM provider</text>
+        <text class="s" x="840" y="823" text-anchor="middle">off unless configured</text>
+        <line class="wd" x1="664" y1="809" x2="736" y2="809" marker-start="url(#ard)" marker-end="url(#ard)"/>
+        <line class="w" x1="480" y1="838" x2="480" y2="868" marker-end="url(#ar)"/>
+        <text class="lab" x="490" y="858">accepted claims</text>
+
+        <rect class="core" x="300" y="870" width="360" height="58" rx="8"/>
+        <circle class="num" cx="300" cy="870" r="12"/><text class="numt" x="300" y="874" text-anchor="middle">11</text>
+        <text class="t" x="480" y="894" text-anchor="middle">Coverage + report</text>
+        <text class="s" x="480" y="913" text-anchor="middle">What was checked, what was not, and the final files</text>
+        <line class="w" x1="480" y1="928" x2="480" y2="984" marker-end="url(#ar)"/>
+
+        <rect class="out" x="250" y="986" width="460" height="54" rx="8"/>
+        <text class="t" x="480" y="1008" text-anchor="middle">Result files</text>
+        <text class="s" x="480" y="1027" text-anchor="middle">run.json · findings.json · coverage.json · sbom.cdx.json · report.html</text>
+
+        <path class="w" d="M250,1013 H20 V49 H298" marker-end="url(#ar)"/>
+        <text class="lab" x="30" y="160">UI polls</text>
+        <text class="lab" x="30" y="174">GET /scan/{id}</text>
+        <text class="lab" x="30" y="188">and shows results</text>
+      </svg>
+    </div>
+    <figcaption>One scan, from a pasted link to the results screen. Steps 1–3 only run for a pasted link; the command line starts at step 4 with a local folder. Steps 4–5 know about specific languages; everything from step 6 down works only with purls, so a new language needs only a new step-4 parser.</figcaption>
+  </figure>
+</section>
+
+<section>
+  <h2>Every step explained</h2>
+  <div class="cards">
+
+    <article class="card"><div class="n">1</div><div class="body">
+      <div class="head"><h3>Web UI</h3><span class="file">Bosch_Guardian_Clean/frontend</span></div>
+      <p>You paste a GitHub URL and, if you want, a branch, tag or commit. While the scan runs, the page shows which stage it is on. When it finishes, it shows counts by risk, each finding with its path and proof, and download buttons for the SBOM and the report.</p>
+      <div class="io"><span class="chip">URL + ref</span><span class="to">→</span><span class="chip o">request to the API</span></div>
+    </div></article>
+
+    <article class="card"><div class="n">2</div><div class="body">
+      <div class="head"><h3>API server</h3><span class="file">backend/app/main.py</span></div>
+      <p><code>POST /scan</code> answers right away with a scan ID and starts the scan in the background, so the page never freezes. The page asks <code>GET /scan/{id}</code> for progress, then reads <code>/result</code>, <code>/graph</code>, <code>/sbom</code> and <code>/report</code>.</p>
+      <div class="io"><span class="chip">URL + ref</span><span class="to">→</span><span class="chip o">scan ID + background job</span></div>
+    </div></article>
+
+    <article class="card"><div class="n">3</div><div class="body">
+      <div class="head"><h3>Fetch dependency files</h3><span class="file">guardian/fetch.py · guardian/prepare.py</span></div>
+      <p>The GitHub API turns the branch or tag into one exact commit, then downloads only the files that describe dependencies: lockfiles, manifests, Dockerfiles and CI workflows. The app's own source code is never downloaded.</p>
+      <div class="why">This is fast even on very large repos, and the commit ID pins exactly what was scanned. A GITHUB_TOKEN raises GitHub's limit from 60 to 5,000 requests an hour.</div>
+      <div class="io"><span class="chip">URL + ref</span><span class="to">→</span><span class="chip o">small folder of files + commit SHA</span></div>
+    </div></article>
+
+    <article class="card"><div class="n">4</div><div class="body">
+      <div class="head"><h3>Resolve</h3><span class="file">guardian/resolve/</span></div>
+      <p>Finds each lockfile and reads it with a parser for that ecosystem, for example <code>Gemfile.lock</code> for Ruby. The parser lists every parent→child link ("actionpack needs rack-session"). Nothing is installed and no package code runs.</p>
+      <div class="why">Malicious packages hide code in install scripts, so we only read files. Adding a language means adding one parser here.</div>
+      <div class="io"><span class="chip">lockfiles</span><span class="to">→</span><span class="chip o">edges</span></div>
+    </div></article>
+
+    <article class="card"><div class="n">5</div><div class="body">
+      <div class="head"><h3>Build SBOM</h3><span class="file">guardian/sbom.py</span></div>
+      <p>Syft, run in Docker from an image pinned by digest, lists every component with its exact version and a purl. Step 4's edges are merged in, and each lockfile gets a root node that stands for the app.</p>
+      <pre>pkg:npm/jsonwebtoken@0.4.0
+pkg:gem/actionpack@7.0.4
+pkg:pypi/django@4.2</pre>
+      <div class="io"><span class="chip">files + edges</span><span class="to">→</span><span class="chip o">sbom.cdx.json</span></div>
+    </div></article>
+
+    <div class="band"><b>Language boundary.</b> From step 6 on, the code sees only purls in CycloneDX. It does not care whether the app is JavaScript, Ruby, Java or Go.</div>
+
+    <article class="card"><div class="n">6</div><div class="body">
+      <div class="head"><h3>Dependency graph</h3><span class="file">guardian/graph.py</span></div>
+      <p>Each library is a dot and each edge an arrow. For every library it finds the shortest route from the app, and counts how many routes reach it.</p>
+      <pre>app → importmap-rails → actionpack → rack-session</pre>
+      <div class="why">Your app never chose rack-session. The path shows which direct library to upgrade.</div>
+      <div class="io"><span class="chip">SBOM</span><span class="to">→</span><span class="chip o">graph.json, paths</span></div>
+    </div></article>
+
+    <article class="card"><div class="n">7</div><div class="body">
+      <div class="head"><h3>CVE scanners</h3><span class="file">guardian/scanners/grype.py · osv.py</span></div>
+      <p>Grype checks every purl against its local vulnerability database and records the date that database was built. OSV-Scanner checks the same SBOM against the live OSV service, which also lists known malicious packages. Each tool's raw output is saved untouched with its fingerprint.</p>
+      <div class="io"><span class="chip">SBOM</span><span class="to">→</span><span class="chip o">raw/grype.json, raw/osv.json</span></div>
+    </div></article>
+
+    <article class="card"><div class="n">8</div><div class="body">
+      <div class="head"><h3>Six detectors</h3><span class="file">guardian/detectors/</span></div>
+      <p>Small checks for problems that have no CVE yet:</p>
+      <div class="tbl"><table>
+        <thead><tr><th>Check</th><th>Looks for</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">typosquat</td><td>A direct library named one or two letters away from a popular one (top 5,000 npm names)</td></tr>
+          <tr><td class="mono">install_script</td><td>A package that runs code when installed</td></tr>
+          <tr><td class="mono">image_pin</td><td>Dockerfile <code>FROM node:latest</code> or a tag without <code>@sha256</code></td></tr>
+          <tr><td class="mono">ci_pin</td><td>A GitHub Actions step on a movable tag like <code>@main</code></td></tr>
+          <tr><td class="mono">sbom_diff</td><td>Libraries added or changed since the last scan</td></tr>
+          <tr><td class="mono">git_diff</td><td>Changed lines in lockfiles, Dockerfiles and CI files</td></tr>
+        </tbody>
+      </table></div>
+      <div class="io"><span class="chip">SBOM + files + git history</span><span class="to">→</span><span class="chip o">suspicious-change findings</span></div>
+    </div></article>
+
+    <article class="card"><div class="n">9</div><div class="body">
+      <div class="head"><h3>Merge, then rate risk</h3><span class="file">guardian/scanners/merge.py · guardian/risk.py</span></div>
+      <p>If both scanners report the same hole for the same library (even under two names, CVE and GHSA), it becomes one finding marked <code>confirmed_by: grype, osv</code>. Each finding gets its path from step 6. Then the fixed rule table sets the level and records the rule ID.</p>
+      <pre>jsonwebtoken@0.4.0 · CVE-2015-9235 · severity Critical
+→ rule R-CVE-1 → Critical · confirmed by grype + osv</pre>
+      <div class="io"><span class="chip">findings</span><span class="to">→</span><span class="chip o">rated findings</span></div>
+    </div></article>
+
+    <article class="card ai"><div class="n">10</div><div class="body">
+      <div class="head"><h3>AI review + validator</h3><span class="file">guardian/ai/</span></div>
+      <p>Only runs if an AI provider is configured. It gets the top 20 findings, never the whole SBOM. Three AI steps write claims: explain the CVEs, explain the changes, and a short inventory note. Each claim must cite evidence IDs. The validator, which is plain code, checks every CVE ID, name and version against that evidence and rejects mismatches with a reason. The summary uses accepted claims only.</p>
+      <div class="why">Repo text is marked untrusted, secrets are removed before sending, and each AI call has a 30-second limit. If the AI is off or fails, the scan still completes and this section says "unavailable".</div>
+      <div class="io"><span class="chip">top 20 findings</span><span class="to">→</span><span class="chip o">accepted + rejected claims</span></div>
+    </div></article>
+
+    <article class="card"><div class="n">11</div><div class="body">
+      <div class="head"><h3>Coverage + report</h3><span class="file">guardian/coverage.py · guardian/report/</span></div>
+      <p>Writes the result files. If one stage fails, the scan is marked "partial" and the other stages' results are kept.</p>
+      <div class="tbl"><table>
+        <thead><tr><th>File</th><th>What it holds</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">findings.json</td><td>Every finding with level, rule, path, fix version and evidence. The source of truth.</td></tr>
+          <tr><td class="mono">coverage.json</td><td>Each check per language: finding, pass, not covered, or error. Zero libraries shows as a warning.</td></tr>
+          <tr><td class="mono">run.json</td><td>Tool versions, database dates, timings and status of each stage.</td></tr>
+          <tr><td class="mono">sbom.cdx.json</td><td>The ingredients list from step 5.</td></tr>
+          <tr><td class="mono">report.html</td><td>A one-file report for people.</td></tr>
+        </tbody>
+      </table></div>
+    </div></article>
+
+  </div>
+</section>
+</div>
+
+</div>
+
+<script>
+const views = ["overview", "architecture"];
+function show() {
+  const h = location.hash.slice(1);
+  const v = views.includes(h) ? h : "overview";
+  views.forEach(id => { document.getElementById(id).hidden = id !== v; });
+  document.querySelectorAll(".tabs a").forEach(a => {
+    if (a.dataset.view === v) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
+  });
+}
+document.addEventListener("click", e => {
+  const a = e.target.closest("a[data-view]");
+  if (!a) return;
+  e.preventDefault();
+  if (location.hash !== "#" + a.dataset.view) location.hash = a.dataset.view; else show();
+  window.scrollTo(0, 0);
+});
+window.addEventListener("hashchange", show);
+show();
+</script>
+</html>

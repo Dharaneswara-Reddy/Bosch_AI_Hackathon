@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from guardian.ai.context import ReviewContext
 from guardian.ai.validator import validate
 from tests.ai.factories import GRYPE_URL, claim, make_context
 
@@ -120,3 +121,74 @@ def test_package_known_only_from_finding_purl_is_checked() -> None:
     ok, reason = _check("left-pad 9.9.9 was added.", ["ev-diff-0001"])
     assert not ok
     assert "9.9.9" in reason
+
+
+def _with_relevance(reach: str, scope: str, exploited: str) -> ReviewContext:
+    from guardian.models import Reachability, Relevance, RelevanceSignal, RelevanceVerdict
+
+    ctx = make_context()
+    signals = [
+        RelevanceSignal(name="reachability", value=reach),
+        RelevanceSignal(name="dependency_scope", value=scope),
+        RelevanceSignal(name="known_exploited", value=exploited),
+    ]
+    relevance = Relevance(
+        verdict=RelevanceVerdict.RELEVANT, reachability=Reachability(reach), signals=signals
+    )
+    jwt = ctx.findings["f-jwt"].model_copy(update={"relevance": relevance})
+    return ReviewContext.build(
+        [jwt, ctx.findings["f-leftpad"]], ctx.evidence.values(), ctx.components.values()
+    )
+
+
+@pytest.mark.parametrize(
+    ("text", "reach", "scope", "exploited", "ok"),
+    [
+        (
+            "The application imports express-jwt, so jsonwebtoken 0.4.0 is reachable.",
+            "confirmed",
+            "production",
+            "unknown",
+            True,
+        ),
+        (
+            "jsonwebtoken 0.4.0 is reachable from the application.",
+            "not_detected",
+            "production",
+            "unknown",
+            False,
+        ),
+        (
+            "jsonwebtoken 0.4.0 is not imported by the application code.",
+            "unknown",
+            "production",
+            "unknown",
+            False,
+        ),
+        (
+            "jsonwebtoken 0.4.0 is only a dev-only dependency.",
+            "confirmed",
+            "production",
+            "unknown",
+            False,
+        ),
+        (
+            "jsonwebtoken 0.4.0 is a production dependency.",
+            "confirmed",
+            "production",
+            "unknown",
+            True,
+        ),
+        ("CVE-2015-9235 is actively exploited.", "confirmed", "production", "unknown", False),
+        ("CVE-2015-9235 is actively exploited.", "confirmed", "production", "yes", True),
+    ],
+)
+def test_relevance_statements_must_match_signals(
+    text: str, reach: str, scope: str, exploited: str, ok: bool
+) -> None:
+    from guardian.ai.validator import validate
+
+    result = validate(claim(text, ["ev-grype-0001"]), _with_relevance(reach, scope, exploited))
+    assert result.validated is ok, result.rejected_reason
+    if not ok:
+        assert "but recorded" in (result.rejected_reason or "")

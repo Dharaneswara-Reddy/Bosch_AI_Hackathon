@@ -17,7 +17,7 @@
 {% endfor %}
 {% endif %}
 
-## Inventory
+## SBOM and inventory
 
 {{ components|length }} graph components.
 {% if has_sbom %}
@@ -27,16 +27,6 @@ SBOM unavailable.
 {% endif %}
 {% for name, row in coverage.ecosystems.items() %}
 - {{ name|md }} — {{ row.components }} components
-{% endfor %}
-
-## Dependency paths
-
-Runtime reachability is UNKNOWN.
-
-{% for finding in paths %}
-- {{ (finding.advisory_id or finding.anomaly_type or finding.component_id)|md }} — {% for node in finding.dependency_path %}{{ (components[node].name if node in components else node)|md }}{% if not loop.last %} → {% endif %}{% endfor %}{% if finding.path_count is number %} ({{ finding.path_count }} paths){% endif %}{{ "\n" -}}
-{% else %}
-No dependency paths recorded.
 {% endfor %}
 {% macro evidence_for(ids) %}
 {% for id in ids %}
@@ -68,39 +58,93 @@ Risk **{{ finding.risk_level|md }}** · Rule {{ finding.risk_rule_id|md }} · Co
 {% endif %}
 {% endmacro %}
 
-## Advisories
+## How each vulnerability enters the application
+
+{% for row in entries %}
+{% set finding = row.finding %}
+- {{ (finding.advisory_id or finding.purl)|md }} ({{ (finding.relevance.verdict if finding.relevance else "not assessed")|md }}): {% for hop in row.hops %}{{ hop.label|md }}{% if hop.edge %} → ({{ hop.edge|md }}) {% endif %}{% else %}UNKNOWN path{% endfor %} · introduced by {{ (row.introduced_by or "UNKNOWN")|md }} · {{ finding.path_count if finding.path_count is number else "UNKNOWN" }} path(s){{ "\n" -}}
+{% else %}
+No vulnerabilities to trace.
+{% endfor %}
+
+## Vulnerabilities ranked by relevance
 
 {% for finding in findings %}
 {% set component = components.get(finding.component_id) %}
-### {{ finding.advisory_id|md }} — {{ (component.name if component else finding.component_id)|md }}
+### {{ (finding.relevance.verdict if finding.relevance else "not assessed")|md }}: {{ finding.advisory_id|md }} — {{ (component.name if component else finding.purl)|md }}
 
-Affected version {{ (component.version if component else "UNKNOWN")|md }} · Fix {{ (finding.fixed_versions|join(", ") or "UNKNOWN")|md }} · Aliases {{ (finding.aliases|join(", ") or "UNKNOWN")|md }}.
+{% if finding.relevance %}
+{{ finding.relevance.summary|md }}
 
-Source severity {{ finding.source_severity|md }} · Confirmed by {{ (finding.confirmed_by|join(" + ") or "UNKNOWN")|md }}.
-
-{% if finding.severities is defined %}
-{% for source, severity in finding.severities.items() %}
-- {{ source|md }} — {{ severity|md }}
+| Signal | Value | Detail |
+|---|---|---|
+{% for signal in finding.relevance.signals %}
+| {{ signal.name|md }} | {{ signal.value|md }} | {{ signal.detail|md }} |
 {% endfor %}
+
 {% endif %}
-{{ risk(finding) }}
-{{ evidence_for(finding.evidence_ids) }}
-{% else %}
-No advisories reported. See coverage for scan completeness.
-{% endfor %}
-
-## Anomalies
-
-{% for finding in anomalies %}
-### {{ finding.anomaly_type|md }}
-
-{{ finding.component_id|md }}
+Fix {{ (finding.fixed_versions|join(", ") or "UNKNOWN")|md }} · Aliases {{ (finding.aliases|join(", ") or "UNKNOWN")|md }} · Source severity {{ finding.source_severity|md }} · Confirmed by {{ (finding.confirmed_by|join(" + ") or "UNKNOWN")|md }}.
 
 {{ risk(finding) }}
 {{ evidence_for(finding.evidence_ids) }}
 {% else %}
-No anomalies reported. See coverage for detector results.
+No vulnerabilities reported. This is not proof the application is safe; see coverage.
 {% endfor %}
+
+## Suspicious and malicious packages
+
+{% for finding in suspicious %}
+### {{ (finding.anomaly_type or "malicious package")|md }} — {{ finding.purl|md }}
+
+{{ risk(finding) }}
+{{ evidence_for(finding.evidence_ids) }}
+{% else %}
+No suspicious packages reported. See coverage for detector results.
+{% endfor %}
+
+## AI analysis
+
+AI status {{ scan.llm_status|md }}. Every claim below was checked by code against the evidence it cites.
+
+{% for title, claims in [("Accepted evidence claims", accepted), ("AI inferences", inferences), ("Rejected claims", rejected)] %}
+### {{ title }}
+
+{% for claim in claims %}
+**{{ claim.step|md }}:** {{ claim.text|md }}
+
+{% if claim.rejected_reason %}
+Reason: {{ claim.rejected_reason|md }}
+
+{% endif %}
+{% if claim.uncertainty and claim.uncertainty != "UNKNOWN" %}
+Uncertainty: {{ claim.uncertainty|md }}
+
+{% endif %}
+{% else %}
+None recorded.
+
+{% endfor %}
+{% endfor %}
+
+## Fix proposals (human approval required)
+
+{% for claim in fixes %}
+- **{{ "Proposed" if claim.validated else "Rejected" }}:** {{ claim.text|md }}{% if claim.rejected_reason %} Reason: {{ claim.rejected_reason|md }}{% endif %}{{ "\n" -}}
+{% else %}
+No fix proposals (AI review off, failed, or no finding passed validation).
+{% endfor %}
+
+## Agent trace
+
+{% if trace %}
+| Agent | Consumed | Produced | Accepted | Rejected | LLM calls | Note |
+|---|---:|---:|---:|---:|---:|---|
+{% for step in trace %}
+| {{ step.agent|md }} | {{ step.consumed|length }} | {{ step.produced|length }} | {{ step.accepted }} | {{ step.rejected }} | {{ step.llm_calls }} | {{ (step.error or "")|md }} |
+{% endfor %}
+{% else %}
+The AI review did not run for this scan.
+{% endif %}
 
 ## Coverage
 
@@ -126,30 +170,8 @@ No anomalies reported. See coverage for detector results.
 No detector coverage recorded.
 {% endif %}
 
-## AI claims
+## Remaining unknowns and limitations
 
-AI status {{ scan.llm_status|md }}.
-
-{% for title, claims in [("Accepted evidence claims", accepted), ("AI inferences", inferences), ("Rejected claims", rejected)] %}
-### {{ title }}
-
-{% for claim in claims %}
-{{ claim.text|md }}
-
-{% if claim.rejected_reason %}
-Reason: {{ claim.rejected_reason|md }}
-
-{% endif %}
-{% if claim.uncertainty and claim.uncertainty != "UNKNOWN" %}
-Uncertainty: {{ claim.uncertainty|md }}
-
-{% endif %}
-{% if claim.evidence_ids %}
-{{ evidence_for(claim.evidence_ids) }}
-
-{% endif %}
-{% else %}
-None recorded.
-
-{% endfor %}
+{% for item in unknowns %}
+- {{ item|md }}
 {% endfor %}

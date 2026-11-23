@@ -14,6 +14,7 @@ from guardian.models import GraphArtifact
 from . import pipeline
 from .schemas import ScanRecord, ScanRequest, ScanResult, ScanStarted
 
+pipeline.load_root_env()
 app = FastAPI(title="Bosch Guardian API", version="0.3.0")
 app.add_middleware(
     CORSMiddleware,
@@ -61,16 +62,20 @@ def _artifact(scan_id: str, name: str) -> Path:
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "service": "bosch-guardian"}
+    ai = os.environ.get("GUARDIAN_LLM_PROVIDER", "none") if pipeline.ai_enabled() else "off"
+    return {"status": "ok", "service": "bosch-guardian", "ai": ai}
 
 
 @app.post("/scan", status_code=202)
 def start_scan(request: ScanRequest, background: BackgroundTasks) -> ScanStarted:
     try:
-        record = pipeline.create_record(request.url, request.ref, scan_base())
+        record = (pipeline.create_demo_record(scan_base()) if request.demo
+                  else pipeline.create_record(request.url, request.ref, scan_base()))
     except FetchError as error:
         raise HTTPException(422, str(error)) from error
-    background.add_task(pipeline.run_pipeline, record, os.environ.get("GITHUB_TOKEN"))
+    background.add_task(
+        pipeline.run_pipeline, record, os.environ.get("GITHUB_TOKEN"), request.inject_fake_claim,
+    )
     return ScanStarted(scan_id=record.scan_id, status=record.status)
 
 

@@ -1,0 +1,41 @@
+diff --git a/.github/workflows/release-helper.yml b/.github/workflows/release-helper.yml
+new file mode 100644
+index 0000000..9ff34c7
+--- /dev/null
++++ b/.github/workflows/release-helper.yml
+@@ -0,0 +1,11 @@
++name: Release Helper
++on:
++  workflow_dispatch:
++jobs:
++  deploy:
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@main
++      - uses: some-org/deploy-action@main
++        with:
++          token: ${{ secrets.DEPLOY_TOKEN }}
+diff --git a/Dockerfile b/Dockerfile
+index ce55391..071b137 100644
+--- a/Dockerfile
++++ b/Dockerfile
+@@ -1,4 +1,4 @@
+-FROM node:24 AS installer
++FROM node:latest AS installer
+ COPY . /juice-shop
+ WORKDIR /juice-shop
+ RUN npm install -g typescript@^6.0.3
+diff --git a/package.json b/package.json
+index cd78114..13bb19b 100644
+--- a/package.json
++++ b/package.json
+@@ -144,7 +144,8 @@
+     "unzipper": "^0.12.3",
+     "winston": "^3.16.0",
+     "z85": "^0.0.2",
+-    "zod": "^4.4.3"
++    "zod": "^4.4.3",
++    "core-js": "3.38.1"
+   },
+   "devDependencies": {
+     "@cyclonedx/cyclonedx-npm": "^2.0.0||^3.0.0||^4.00",
