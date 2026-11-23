@@ -22,6 +22,7 @@ from uuid import uuid4
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 
 from guardian.ai.review import load_injected, run_review
+from guardian.analysis import apply_relevance, apply_scope
 from guardian.config import Settings
 from guardian.coverage import build_coverage
 from guardian.evidence import EvidenceStore, file_sha256
@@ -93,6 +94,7 @@ def _checkpoint(context: ScanContext) -> None:
     result.evidence = context.evidence.records()
     findings = FindingsArtifact(
         findings=result.findings, evidence=result.evidence, claims=result.claims,
+        agent_trace=result.agent_trace,
     )
     for filename, data in zip(OUTPUT_FILES, (result.scan, result.graph, findings, result.coverage)):
         _write_model(context.out / filename, data)
@@ -305,11 +307,21 @@ def _classify(context: ScanContext) -> None:
             context.result.findings[index] = revised
 
 
+def _scope(context: ScanContext) -> None:
+    roots = getattr(context.graph, "graph", {}).get("roots", []) if context.graph else []
+    apply_scope(context.result, context.target_path, list(roots))
+
+
+def _relevance(context: ScanContext) -> None:
+    apply_relevance(context.result, context.target_path, context.out, context.evidence)
+
+
 def _review(context: ScanContext) -> None:
     result = context.result
     injected = load_injected(context.inject_claim, result) if context.inject_claim else []
-    claims, status = run_review(result, context.settings, injected)
+    claims, status, trace = run_review(result, context.settings, injected)
     result.claims.extend(claims)
+    result.agent_trace = trace
     result.scan.llm_status = status
 
 
@@ -461,8 +473,8 @@ def _scan_context(context: ScanContext, clean_commit: bool, use_llm: bool) -> Ru
     (context.out / "graph.json").unlink(missing_ok=True)
     _write_model(context.out / "run.json", context.result.scan)
     for name, action in (
-        ("inventory", _inventory), ("scanners", _scanners), ("detectors", _detectors),
-        ("risk", _classify),
+        ("inventory", _inventory), ("scope", _scope), ("scanners", _scanners),
+        ("detectors", _detectors), ("risk", _classify), ("relevance", _relevance),
     ):
         _attempt(context, name, action)
         _write_model(context.out / "run.json", context.result.scan)

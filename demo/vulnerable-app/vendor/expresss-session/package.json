@@ -1,0 +1,13 @@
+{
+  "name": "expresss-session",
+  "version": "1.0.0",
+  "description": "SYNTHETIC TEST PACKAGE for the Guardian demo. Typosquat-style name of express-session. Inert: contains no code, is never published, installed or run.",
+  "license": "MIT",
+  "scripts": {
+    "postinstall": "node -e \"console.log('SYNTHETIC demo install script: does nothing')\""
+  },
+  "guardian": {
+    "synthetic": true,
+    "purpose": "Demonstrates detection of a typosquat-style package with an install script from a non-registry source."
+  }
+}

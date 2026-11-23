@@ -1,0 +1,4 @@
+description: >-
+  A dependency is added from a local path (file:) instead of the npm registry, and it declares an install script. Both the package and its script are inert synthetic fixtures.
+base: juice-shop@c9f99228d9d56afb5f5ca7925376292f7fa44b13
+author: P4

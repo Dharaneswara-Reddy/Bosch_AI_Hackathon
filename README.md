@@ -25,6 +25,21 @@ guardian scan targets/railsgoat --out artifacts/second-target --no-llm
 
 Open `report.html` inside each output folder. The same folder contains the JSON artifacts and the Markdown report. Exit codes are 0 for complete, 2 for partial, and 1 for failed. Review the scan header for any missing stages.
 
+## Relevance, entry paths and the demo app
+
+Every vulnerability is traced from the application to the vulnerable package (each hop, the
+direct dependency that introduces it, number of paths, production or dev scope) and given a
+relevance verdict from recorded signals: relevant, likely relevant, unknown or low relevance.
+The verdict never says "safe". `demo/vulnerable-app` is a local, deliberately vulnerable app
+with a synthetic malicious-style package for the live demo:
+
+```sh
+guardian scan demo/vulnerable-app --out artifacts/demo --no-llm
+```
+
+Safety rules, the open-source inventory and the changelog: [demo app](demo/vulnerable-app/README.md),
+[open-source components](docs/open-source.md), [changes](docs/changes.md).
+
 ## Team integration
 
 Live scans require the P1 inventory and graph modules, P2 scanner modules, and P3 detector registry. AI review and claim injection also require the P4 modules. A missing scan stage is recorded in the report, and available stages keep running.

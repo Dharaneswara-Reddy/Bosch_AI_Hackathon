@@ -4,17 +4,25 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from guardian.fetch import FetchedFile
-from guardian.models import CoverageArtifact, Evidence, Finding, Scan
+from guardian.models import AgentClaim, AgentTrace, CoverageArtifact, Evidence, Finding, Scan
 
 Status = Literal["running", "complete", "partial", "failed"]
 
 
 class ScanRequest(BaseModel):
-    url: str = Field(min_length=1, max_length=400)
+    url: str = Field(default="", max_length=400)
     ref: str = Field(default="", max_length=120)
+    inject_fake_claim: bool = False
+    demo: bool = False
+
+    @model_validator(mode="after")
+    def require_url_unless_demo(self) -> "ScanRequest":
+        if not self.demo and not self.url.strip():
+            raise ValueError("Enter a GitHub repository URL, or choose the built-in demo app.")
+        return self
 
 
 class ScanRecord(BaseModel):
@@ -25,6 +33,7 @@ class ScanRecord(BaseModel):
     ref: str = ""
     commit_sha: str = ""
     llm_status: str = "unavailable"
+    demo: bool = False
     error: str | None = None
     errors: dict[str, str] = Field(default_factory=dict)
     created_at: datetime
@@ -51,3 +60,5 @@ class ScanResult(BaseModel):
     coverage: CoverageArtifact
     counts_by_risk: dict[str, int]
     fetch: FetchSummary
+    claims: list[AgentClaim] = Field(default_factory=list)
+    agent_trace: list[AgentTrace] = Field(default_factory=list)

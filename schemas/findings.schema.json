@@ -63,6 +63,61 @@
       "title": "AgentClaim",
       "type": "object"
     },
+    "AgentTrace": {
+      "description": "One agent hand-off: what it consumed, what it produced, how much was accepted.",
+      "properties": {
+        "agent": {
+          "title": "Agent",
+          "type": "string"
+        },
+        "consumed": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Consumed",
+          "type": "array"
+        },
+        "produced": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Produced",
+          "type": "array"
+        },
+        "accepted": {
+          "default": 0,
+          "title": "Accepted",
+          "type": "integer"
+        },
+        "rejected": {
+          "default": 0,
+          "title": "Rejected",
+          "type": "integer"
+        },
+        "llm_calls": {
+          "default": 0,
+          "title": "Llm Calls",
+          "type": "integer"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        }
+      },
+      "required": [
+        "agent"
+      ],
+      "title": "AgentTrace",
+      "type": "object"
+    },
     "ClaimKind": {
       "enum": [
         "evidence",
@@ -223,11 +278,7 @@
           "type": "array"
         },
         "match_basis": {
-          "allOf": [
-            {
-              "$ref": "#/$defs/MatchBasis"
-            }
-          ],
+          "$ref": "#/$defs/MatchBasis",
           "default": "unknown"
         },
         "dependency_path": {
@@ -257,19 +308,11 @@
           "type": "array"
         },
         "state": {
-          "allOf": [
-            {
-              "$ref": "#/$defs/FindingState"
-            }
-          ],
+          "$ref": "#/$defs/FindingState",
           "default": "affected"
         },
         "risk_level": {
-          "allOf": [
-            {
-              "$ref": "#/$defs/RiskLevel"
-            }
-          ],
+          "$ref": "#/$defs/RiskLevel",
           "default": "unknown"
         },
         "risk_rule_id": {
@@ -318,6 +361,17 @@
           ],
           "default": null,
           "title": "Risk Note"
+        },
+        "relevance": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Relevance"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
@@ -356,6 +410,102 @@
       "title": "MatchBasis",
       "type": "string"
     },
+    "Reachability": {
+      "enum": [
+        "confirmed",
+        "not_detected",
+        "unknown"
+      ],
+      "title": "Reachability",
+      "type": "string"
+    },
+    "Relevance": {
+      "description": "Code-computed relevance of a vulnerability or malicious-package finding.",
+      "properties": {
+        "verdict": {
+          "$ref": "#/$defs/RelevanceVerdict",
+          "default": "unknown"
+        },
+        "reachability": {
+          "$ref": "#/$defs/Reachability",
+          "default": "unknown"
+        },
+        "introduced_by": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Introduced By"
+        },
+        "path_labels": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Path Labels",
+          "type": "array"
+        },
+        "signals": {
+          "items": {
+            "$ref": "#/$defs/RelevanceSignal"
+          },
+          "title": "Signals",
+          "type": "array"
+        },
+        "summary": {
+          "default": "",
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "title": "Relevance",
+      "type": "object"
+    },
+    "RelevanceSignal": {
+      "description": "One evidence-backed fact used to decide whether a finding matters.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "value": {
+          "title": "Value",
+          "type": "string"
+        },
+        "detail": {
+          "default": "",
+          "title": "Detail",
+          "type": "string"
+        },
+        "evidence_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "value"
+      ],
+      "title": "RelevanceSignal",
+      "type": "object"
+    },
+    "RelevanceVerdict": {
+      "enum": [
+        "relevant",
+        "likely_relevant",
+        "low_relevance",
+        "unknown"
+      ],
+      "title": "RelevanceVerdict",
+      "type": "string"
+    },
     "RiskLevel": {
       "enum": [
         "critical",
@@ -388,6 +538,13 @@
         "$ref": "#/$defs/AgentClaim"
       },
       "title": "Claims",
+      "type": "array"
+    },
+    "agent_trace": {
+      "items": {
+        "$ref": "#/$defs/AgentTrace"
+      },
+      "title": "Agent Trace",
       "type": "array"
     }
   },

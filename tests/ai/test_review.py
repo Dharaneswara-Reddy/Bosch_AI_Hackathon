@@ -31,7 +31,8 @@ def test_fixture_claims_are_rejected_with_reasons_and_llm_off_is_unavailable() -
     injected = load_injected(FIXTURES / "fake_cve_claim.json", result)
     assert [c.step for c in injected] == ["injected", "injected"]
     assert injected[0].evidence_ids == ["ev-grype-0001"]
-    claims, status = run_review(result, Settings(), injected)
+    claims, status, trace = run_review(result, Settings(), injected)
+    assert [t.agent for t in trace][:2] == ["triage", "relevance"]
     assert status == LlmStatus.UNAVAILABLE
     assert [c.validated for c in claims] == [False, False]
     assert "CVE-2026-31337" in (claims[0].rejected_reason or "")
@@ -40,9 +41,14 @@ def test_fixture_claims_are_rejected_with_reasons_and_llm_off_is_unavailable() -
 
 def test_single_claim_object_is_accepted(tmp_path: Path) -> None:
     path = tmp_path / "claim.json"
-    path.write_text(json.dumps({
-        "text": "jsonwebtoken 0.4.0 is affected by CVE-2015-9235.",
-        "evidence_ids": ["@top-finding"], "kind": "evidence",
-    }))
-    claims, _ = run_review(_result(), Settings(), load_injected(path, _result()))
+    path.write_text(
+        json.dumps(
+            {
+                "text": "jsonwebtoken 0.4.0 is affected by CVE-2015-9235.",
+                "evidence_ids": ["@top-finding"],
+                "kind": "evidence",
+            }
+        )
+    )
+    claims, _, _ = run_review(_result(), Settings(), load_injected(path, _result()))
     assert [c.validated for c in claims] == [True]

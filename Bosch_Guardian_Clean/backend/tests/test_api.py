@@ -86,3 +86,81 @@ def test_invalid_url_is_422(client: TestClient) -> None:
 
 def test_unknown_scan_is_404(client: TestClient) -> None:
     assert client.get("/scan/nope").status_code == 404
+
+
+def test_ai_is_enabled_only_with_provider_and_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GUARDIAN_LLM_PROVIDER", "groq")
+    monkeypatch.delenv("GUARDIAN_LLM_API_KEY", raising=False)
+    assert not pipeline.ai_enabled()
+    monkeypatch.setenv("GUARDIAN_LLM_API_KEY", "gsk_test")
+    assert pipeline.ai_enabled()
+    monkeypatch.setenv("GUARDIAN_LLM_PROVIDER", "none")
+    assert not pipeline.ai_enabled()
+
+
+def test_fake_claim_injection_and_claims_in_result(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from guardian.models import AgentClaim, ClaimKind
+
+    seen: dict[str, object] = {}
+
+    def scan(target: Path, out: Path, **kwargs: object) -> RunResult:
+        seen.update(kwargs)
+        result = _fake_scan(target, out)
+        claim = AgentClaim(claim_id="c1", step="injected", text="fake", kind=ClaimKind.EVIDENCE,
+                           rejected_reason="advisory CVE-2026-31337 is not in the cited findings")
+        (out / "findings.json").write_text(json.dumps(
+            {"findings": [], "evidence": [], "claims": [claim.model_dump(mode="json")]}))
+        return result
+
+    monkeypatch.setenv("GUARDIAN_LLM_PROVIDER", "none")
+    monkeypatch.setattr(pipeline, "fetch_repo_files", _fake_fetch)
+    monkeypatch.setattr(pipeline.runner, "scan", scan)
+    scan_id = client.post("/scan", json={"url": "https://github.com/o/r",
+                                         "inject_fake_claim": True}).json()["scan_id"]
+    assert seen["use_llm"] is False
+    assert seen["inject_claim"] == pipeline.FAKE_CLAIM and pipeline.FAKE_CLAIM.is_file()
+    claims = client.get(f"/scan/{scan_id}/result").json()["claims"]
+    assert claims[0]["rejected_reason"].startswith("advisory CVE-2026-31337")
+
+
+def test_root_env_file_is_loaded_without_overriding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env = tmp_path / ".env"
+    env.write_text("GUARDIAN_TEST_A=from_file\nGUARDIAN_TEST_B=from_file\n")
+    monkeypatch.setenv("GUARDIAN_TEST_B", "from_env")
+    monkeypatch.delenv("GUARDIAN_TEST_A", raising=False)
+    pipeline.load_root_env(env)
+    import os
+    assert os.environ["GUARDIAN_TEST_A"] == "from_file"
+    assert os.environ["GUARDIAN_TEST_B"] == "from_env"
+    monkeypatch.delenv("GUARDIAN_TEST_A")
+
+
+def test_demo_scan_copies_the_local_demo_app_with_source(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: dict[str, Path] = {}
+
+    def scan(target: Path, out: Path, **kwargs: object) -> RunResult:
+        seen["target"] = target
+        return _fake_scan(target, out)
+
+    def no_fetch(*_: object) -> None:
+        raise AssertionError("the demo must not fetch from GitHub")
+
+    monkeypatch.setattr(pipeline, "fetch_repo_files", no_fetch)
+    monkeypatch.setattr(pipeline.runner, "scan", scan)
+    scan_id = client.post("/scan", json={"demo": True}).json()["scan_id"]
+    status = client.get(f"/scan/{scan_id}").json()
+    assert status["demo"] is True and status["commit_sha"] == "local-demo"
+    assert (seen["target"] / "src" / "server.js").is_file()
+    assert (seen["target"] / "vendor" / "expresss-session" / "package.json").is_file()
+    files = {f["path"] for f in client.get(f"/scan/{scan_id}/result").json()["fetch"]["files"]}
+    assert {"package.json", "package-lock.json"} <= files
+
+
+def test_url_is_required_unless_demo(client: TestClient) -> None:
+    assert client.post("/scan", json={"url": ""}).status_code == 422

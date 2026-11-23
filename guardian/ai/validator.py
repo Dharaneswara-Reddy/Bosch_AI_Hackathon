@@ -52,6 +52,20 @@ SEVERITY_MENTION = re.compile(
 SEVERITY_ALIASES = {"moderate": "medium"}
 VERSION_AFTER_NAME = r"(?:v(?:ersion)?\s*)?(\d+\.\d+(?:\.\d+)*[\w.+-]*)"
 
+NOT_REACHED = re.compile(
+    r"(?i)\b(?:not|never)\s+(?:directly\s+)?(?:reachable|reached|imported)\b"
+    r"|\b(?:does|do)\s+not\s+(?:import|require|call|load)\b"
+)
+REACHED = re.compile(
+    r"(?i)\b(?:is|are)\s+(?:directly\s+)?(?:reachable|reached)\b"
+    r"|\b(?:application|app|code|project)\s+(?:directly\s+)?(?:imports|requires|calls|loads)\b"
+    r"|\bimported\s+(?:by|in|at|from)\b"
+)
+DEV_ONLY = re.compile(r"(?i)\bdev(?:elopment)?(?:-only|\s+only)?\s+dependenc(?:y|ies)\b")
+PRODUCTION = re.compile(r"(?i)\bproduction\s+dependenc(?:y|ies)\b")
+NOT_EXPLOITED = re.compile(r"(?i)\bnot\s+(?:known\s+to\s+be\s+|actively\s+)?exploited\b")
+EXPLOITED = re.compile(r"(?i)\b(?:actively|known|being)\s+exploited\b|\bCISA\s+KEV\b")
+
 Check = Callable[[AgentClaim, ReviewContext, list[Finding]], list[str]]
 
 
@@ -143,7 +157,12 @@ def _check_uncited_names(text: str, ctx: ReviewContext, allowed: dict[str, set[s
     return reasons
 
 
-def check_paths_and_urls(claim: AgentClaim, ctx: ReviewContext, cited: list[Finding]) -> list[str]:
+def check_paths_and_urls(
+    claim: AgentClaim,
+    ctx: ReviewContext,
+    cited: list[Finding],
+    allowed_paths: frozenset[str] = frozenset(),
+) -> list[str]:
     records = [ctx.evidence[i] for i in claim.evidence_ids if i in ctx.evidence]
     records += [ctx.evidence[i] for f in cited for i in f.evidence_ids if i in ctx.evidence]
     urls = {(r.url or "").rstrip("/") for r in records}
@@ -157,7 +176,10 @@ def check_paths_and_urls(claim: AgentClaim, ctx: ReviewContext, cited: list[Find
     ]
     text = PURL.sub(" ", URL.sub(" ", claim.text))
     for path in sorted({m.group(1) for m in FILE_PATH.finditer(text)}):
-        if path.lower() not in names and path not in haystack:
+        known = (
+            path.lower() in names or path in haystack or path.rsplit("/", 1)[-1] in allowed_paths
+        )
+        if not known:
             reasons.append(f"file path {path} is not in the cited evidence")
     return reasons
 
@@ -169,6 +191,41 @@ def check_no_safety_verdict(
     return (
         [f"declares safety ('{match.group(0)}'); the Guardian never reports safe"] if match else []
     )
+
+
+def _signal_values(cited: list[Finding], name: str) -> set[str]:
+    return {s.value for f in cited if f.relevance for s in f.relevance.signals if s.name == name}
+
+
+def _relevance_rules(text: str) -> list[tuple[str, str, set[str], str]]:
+    """(signal, required values, matched phrase) for every relevance statement in the text."""
+    rules: list[tuple[str, str, set[str], str]] = []
+    if match := NOT_REACHED.search(text):
+        rules.append(("reachability", "not reached", {"not_detected"}, match.group(0)))
+    elif match := REACHED.search(text):
+        rules.append(("reachability", "reached", {"confirmed"}, match.group(0)))
+    if match := DEV_ONLY.search(text):
+        rules.append(("dependency_scope", "dev-only", {"development"}, match.group(0)))
+    if match := PRODUCTION.search(text):
+        rules.append(("dependency_scope", "production", {"production"}, match.group(0)))
+    if match := NOT_EXPLOITED.search(text):
+        rules.append(("known_exploited", "not exploited", {"no"}, match.group(0)))
+    elif match := EXPLOITED.search(text):
+        rules.append(("known_exploited", "exploited", {"yes"}, match.group(0)))
+    return rules
+
+
+def check_relevance_claims(
+    claim: AgentClaim, ctx: ReviewContext, cited: list[Finding]
+) -> list[str]:
+    """Statements about reachability, scope or exploitation must match the recorded signal."""
+    reasons = []
+    for signal, _meaning, allowed, phrase in _relevance_rules(claim.text):
+        recorded = _signal_values(cited, signal)
+        if not recorded & allowed:
+            shown = ", ".join(sorted(recorded)) or "not recorded"
+            reasons.append(f"says '{phrase}' but recorded {signal} is {shown}")
+    return reasons
 
 
 def check_severity(claim: AgentClaim, ctx: ReviewContext, cited: list[Finding]) -> list[str]:
@@ -185,17 +242,23 @@ CHECKS: tuple[Check, ...] = (
     check_ids_exist,
     check_advisories,
     check_packages,
-    check_paths_and_urls,
     check_evidence_kind,
     check_no_safety_verdict,
     check_severity,
+    check_relevance_claims,
 )
 
 
-def validate(claim: AgentClaim, ctx: ReviewContext) -> AgentClaim:
-    """Return a copy of the claim with ``validated`` and ``rejected_reason`` set."""
+def validate(
+    claim: AgentClaim, ctx: ReviewContext, allowed_paths: frozenset[str] = frozenset()
+) -> AgentClaim:
+    """Return a copy of the claim with ``validated`` and ``rejected_reason`` set.
+
+    ``allowed_paths`` names extra file names a claim may mention (used only for fix
+    proposals, which legitimately refer to manifests and lockfiles).
+    """
     cited = ctx.findings_citing(claim.evidence_ids)
-    reasons: list[str] = []
+    reasons = check_paths_and_urls(claim, ctx, cited, allowed_paths)
     for check in CHECKS:
         reasons.extend(check(claim, ctx, cited))
     if reasons:

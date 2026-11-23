@@ -1,0 +1,12 @@
+{
+  "name": "local-build-helper",
+  "version": "1.0.0",
+  "description": "SYNTHETIC holdout fixture: inert, never installed or run.",
+  "license": "MIT",
+  "scripts": {
+    "postinstall": "node -e \"console.log('synthetic fixture: does nothing')\""
+  },
+  "guardian": {
+    "synthetic": true
+  }
+}

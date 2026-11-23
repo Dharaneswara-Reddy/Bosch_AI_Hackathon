@@ -1,65 +1,71 @@
-# P4: AI review, validator and evaluation (handoff)
+# P4: Multi-agent AI review, validation and evaluation (handoff)
 
-What P4 built, how P5 wires it in, and what it assumes about `guardian/models.py`.
+Full description: [`guardian/ai/README.md`](../guardian/ai/README.md). This page covers what other team
+members need to know.
 
-## Files
+## What changed (multi-agent rework)
 
-| File | Purpose |
-|---|---|
-| `guardian/ai/llm.py` | `LLMClient.complete(system, user, schema, timeout) -> dict`; `NoneClient`; `OpenAICompatibleClient` (OpenAI, Ollama, vLLM, Groq, ...); `build_client(provider, model, api_key, base_url)` |
-| `guardian/ai/schemas.py` | `LLMReply` / `LLMClaim`: the only shape the model may return (`extra="forbid"`, max 8 claims, max 600 chars) |
-| `guardian/ai/prompts.py` | System rules + per-step tasks (`explain_vulns`, `explain_changes`, `inventory_note`, `summarize`) |
-| `guardian/ai/guardrails.py` | `wrap_untrusted` (escapes delimiter look-alikes), `redact_secrets`, `find_injection_markers` |
-| `guardian/ai/context.py` | `ReviewContext`: read-only view of findings, evidence, components |
-| `guardian/ai/validator.py` | Plain-code claim validator (the 5 design checks + "never safe" + severity must match) |
-| `guardian/ai/steps.py` | `run_ai_review(...)`: top-20 only, 30 s deadline per call, retry once on bad schema, circuit breaker; `load_injected_claims(...)` for `--inject-claim` |
-| `guardian/eval/scorer.py` | `run_eval(scenarios_dir, base, scan_fn)`: per-scenario pass/fail + per-detector precision/recall |
-| `holdout-scenarios/hs-01..05` | Planted cases (P3 must not read) |
-| `tests/fixtures/fake_cve_claim.json` | Demo file for `--inject-claim` |
+The single "explain" step was replaced by a **LangGraph** graph of specialised agents with typed,
+evidence-cited hand-offs:
 
-## Wiring for P5 (`runner.py` / `cli.py`)
-
-```python
-from guardian.ai import ReviewContext, build_client, load_injected_claims, run_ai_review
-
-ctx = ReviewContext.build(findings, evidence, components, project_text=readme_first_2000_chars)
-client = build_client("none" if no_llm else settings.llm_provider, settings.llm_model,
-                      settings.llm_api_key, settings.llm_base_url)
-injected = load_injected_claims(inject_claim_path, ctx) if inject_claim_path else []
-result = run_ai_review(ctx, client, injected=injected, timeout=settings.llm_timeout_s)
-# findings.json   <- result.claims (accepted, inference and rejected; rejected_reason shown in report)
-# run.json        <- result.llm_status, result.llm_calls (next to component count), result.step_errors,
-#                    result.injection_markers, result.secrets_redacted
-# Scan.status is never changed by the AI step.
+```
+triage (code) -> vuln_analyst -> change_analyst -> evidence_validator (code)
+   -> [analyst_revision -> evidence_validator]  (once, only if claims were rejected)
+   -> risk_critic (independent reviewer) -> remediation_candidates (code)
+   -> remediation_planner -> report_writer
 ```
 
-`--inject-claim` works with `--no-llm` too, so the fabricated-CVE rejection can be demoed without an API key.
-In the claim file, `"@top-finding"` cites the top finding's first evidence ID, so the rejection reason is
-"advisory CVE-2026-31337 is not in the cited findings" rather than only "evidence ID not found".
+- **Fix recommendations** now exist: code computes which actions and target versions are allowed per
+  finding; the planner chooses and explains; a code validator rejects anything outside those options.
+  Every proposal requires human approval.
+- **Two validation layers:** the code evidence validator (unchanged checks) plus an independent critic
+  agent whose verdicts can only downgrade or reject.
+- **Self-correction:** rejected analyst claims go back to the analyst once, with the rejection reasons.
+- Groq is now called through **LangChain** (`langchain-groq` `ChatGroq`), still with strict structured
+  outputs and no SDK retries.
 
-`guardian eval`: build `scan_fn(target_dir) -> list[ObservedFinding]` that runs the scan against the clean
-baseline and returns `(kind, anomaly_type, component purl)` per finding, then call `run_eval(...)`.
+## Relevance (code) and agent trace
 
-`.env` (for `.env.example`): `GUARDIAN_LLM_PROVIDER=none|openai_compatible`, `GUARDIAN_LLM_MODEL=`,
-`GUARDIAN_LLM_API_KEY=`, `GUARDIAN_LLM_BASE_URL=` (e.g. `http://localhost:11434/v1` for Ollama),
-`GUARDIAN_LLM_TIMEOUT_S=30`.
+- Runner stages `scope` (after inventory) and `relevance` (after risk) attach a `Relevance` to
+  every vulnerability and malicious finding: verdict, reachability, introduced-by direct
+  dependency, path labels and signals with evidence IDs. See `guardian/relevance.py`.
+- The AI graph now runs `triage -> relevance -> analysts ...`; the validator rejects relevance
+  statements that contradict the signals.
+- `run_review(result, settings, injected)` returns `(claims, llm_status, agent_trace)`; the
+  runner stores `agent_trace` in `findings.json`, the report and the UI show it.
+
+## Wiring
+
+`guardian/runner.py` keeps calling `guardian.ai.review.run_review(result, settings, injected)` and gets
+`(claims, llm_status)`. Fix proposals are included in `claims` as `remediation_planner` claims, so the
+report shows them in the existing accepted / inference / rejected sections.
+
+Optional follow-up for P5: `run_ai_review(...)` also returns `proposals` (structured
+`RemediationProposal`s for Day 2's approval flow) and `trace` (one `AgentTrace` per agent: consumed,
+produced, accepted, rejected, LLM calls, error). Writing them to `remediation.json` and `agents.json`
+needs a small runner change.
+
+## Dependencies (`pyproject.toml`)
+
+Added: `langgraph>=1.0`, `langchain-core>=1.0`, `langchain-groq>=1.0`. Re-run
+`python -m pip install -e '.[dev]'`.
+
+## Settings (`.env`)
+
+```
+GUARDIAN_LLM_PROVIDER=groq          # none | groq | openai_compatible
+GUARDIAN_LLM_API_KEY=gsk_...        # Groq key
+GUARDIAN_LLM_MODEL=                 # optional, default openai/gpt-oss-120b
+```
+
+`--no-llm` still works: code-only agents run, `--inject-claim` claims are still validated and rejected,
+`llm_status = unavailable`.
 
 ## What the AI package reads from `guardian/models.py`
 
-Exactly the design's data model table: `Component(component_id, purl, name, version, ecosystem)`,
-`Evidence(evidence_id, tool, file, pointer, url)`, `Finding(finding_id, kind, component_id, advisory_id,
-aliases, anomaly_type, source_severity, fixed_versions, dependency_path, path_count, evidence_ids, state,
-risk_level, risk_rule_id)` and `AgentClaim(claim_id, step, text, evidence_ids, kind, validated,
-rejected_reason, uncertainty)`. Enums are fine (values are read as strings). `dependency_path` holds
-component IDs. Checked against P5's `guardian/models.py` and P2's Grype/OSV fixtures.
-
-`llm_status` is P5's `LlmStatus`: `ok` (at least one step produced claims; failed steps are listed in
-`result.step_errors`), `failed` (every attempted step failed) or `unavailable` (no provider).
-
-**Needed in `pyproject.toml` (P5):** `pyyaml` in `dependencies` (the design already lists it; the scorer
-reads `scenario.yaml`) and `types-PyYAML` in the `dev` extras so `mypy --strict` passes.
+`Component`, `Evidence`, `Finding` (incl. `purl`, `fixed_versions`, `dependency_path` as component IDs,
+`source_file` on the component), `AgentClaim`, `ClaimKind`, `LlmStatus`. No model changes were needed.
 
 ## Holdout scenarios
 
-Five planted cases live in `holdout-scenarios/`. Detector authors should not open that folder, so they are
-not described here.
+Five planted cases live in `holdout-scenarios/`. Detector authors should not open that folder.
