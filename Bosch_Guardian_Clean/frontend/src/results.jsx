@@ -3,6 +3,9 @@ import {ReactFlow, Background, Controls, MarkerType} from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import {layoutSubgraph, selectSubgraph} from './graph-layout.js';
 import {Download, ExternalLink, FileText} from 'lucide-react';
+import {ChangesPanel} from './changes.jsx';
+import {WhyRisk} from './why.jsx';
+import {providerLine} from './why-logic.js';
 
 const API = '/api';
 const RISK_ORDER = ['critical', 'high', 'medium', 'low', 'unknown'];
@@ -80,6 +83,7 @@ function RiskReasons({finding}) {
 function SignalsRow({finding, onShowPath}) {
   const r = finding.relevance;
   return <tr className="signals-row"><td colSpan={9}>
+    <WhyRisk finding={finding}/>
     <RiskReasons finding={finding}/>
     {r ? <><p className="signals-summary">{r.summary}</p>
       <table className="signals"><tbody>{r.signals.map(s => <tr key={s.name}>
@@ -179,7 +183,8 @@ function AIReview({claims, llmStatus, trace, adjustments, agreement}) {
       <p>LLM status: {llmStatus}. Set GUARDIAN_LLM_PROVIDER and GUARDIAN_LLM_API_KEY in .env, or tick the
         hallucination test to see the validator reject a fabricated CVE without a key.</p></div>;
   }
-  return <><AgentTraceTable trace={trace}/><AdjustmentsTable adjustments={adjustments} agreement={agreement}/>{AI_GROUPS.map(([title, steps]) => {
+  const answeredBy = providerLine(trace);
+  return <>{answeredBy && <p className="footnote">{answeredBy}</p>}<AgentTraceTable trace={trace}/><AdjustmentsTable adjustments={adjustments} agreement={agreement}/>{AI_GROUPS.map(([title, steps]) => {
     const rows = claims.filter(c => steps.includes(c.step));
     if (!rows.length) return null;
     return <div className="ai-group" key={title}><h3>{title}</h3><div className="table-scroll"><table><thead><tr>
@@ -289,6 +294,7 @@ export function Results({scanId, status, result, graph}) {
       <div><span>LLM status</span><strong>{result.scan.llm_status}</strong></div>
       <div><span>Resolution</span><strong>{result.scan.resolution}</strong></div>
       <div><span>Files fetched</span><strong>{result.fetch.files.length}{generated.length ? ` (generated lockfiles: ${generated.join(', ')})` : ''}</strong></div></div>
+    <ChangesPanel changes={result.changes}/>
     <div className="risk-counts">{RISK_ORDER.map(level => <div className="metric" key={level}>
       <div className="metric-top">{level.toUpperCase()}</div><strong>{result.counts_by_risk[level] || 0}</strong></div>)}</div>
     {Object.entries({...result.scan.errors, ...result.fetch.errors}).map(([k, v]) =>

@@ -19,6 +19,7 @@ async function request(path, options = {}) {
 }
 
 const STAGES = {queued: 'Queued', fetching: 'Fetching manifests from GitHub', preparing: 'Preparing lockfiles',
+  baseline: 'Scanning the baseline version for comparison',
   scanning: 'Running Guardian scanners (SBOM, Grype, OSV, detectors)'};
 
 function useScan(scanId, onError) {
@@ -50,6 +51,7 @@ function useScan(scanId, onError) {
 function App() {
   const [url, setUrl] = useState('https://github.com/juice-shop/juice-shop');
   const [ref, setRef] = useState('');
+  const [baselineRef, setBaselineRef] = useState('');
   const [scanId, setScanId] = useState('');
   const [injectFake, setInjectFake] = useState(false);
   const [error, setError] = useState('');
@@ -68,7 +70,7 @@ function App() {
     } catch (e) { setError(e.message); }
   }
 
-  function scan(event) { event.preventDefault(); start({url, ref}); }
+  function scan(event) { event.preventDefault(); start({url, ref, baseline_ref: baselineRef}); }
 
   return <div className="shell"><aside className="sidebar">
     <div className="brand"><div className="brandmark"><ShieldCheck size={23} strokeWidth={2.2}/></div><div><strong>Guardian</strong><span>SOFTWARE SECURITY</span></div></div>
@@ -85,6 +87,7 @@ function App() {
         <section className="panel scan-panel"><form onSubmit={scan} className="scan-form">
           <label className="url-field">Repository URL<input required type="url" value={url} onChange={e => setUrl(e.target.value)} placeholder="https://github.com/owner/repository"/></label>
           <label className="ref-field">Branch, tag or commit <span>(optional)</span><input value={ref} onChange={e => setRef(e.target.value)} placeholder="Default branch"/></label>
+          <label className="ref-field">Compare with (older branch, tag or commit) <span>(optional)</span><input value={baselineRef} onChange={e => setBaselineRef(e.target.value)} placeholder="No comparison"/></label>
           <button disabled={busy} className="primary" type="submit">{busy ? <LoaderCircle className="spin" size={17}/> : <Search size={17}/>} {busy ? 'Scanning…' : 'Scan repository'}</button>
         </form>
         <div className="demo-row"><button type="button" disabled={busy} className="outline" onClick={() => start({demo: true})}>
