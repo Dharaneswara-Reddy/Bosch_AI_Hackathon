@@ -75,3 +75,12 @@ test('compareReduction sets expected beside the actual fixed findings', () => {
   assert.equal(compareReduction(null, same), null);
   assert.equal(compareReduction(expected, {fixed: []}).actual, 'nothing');
 });
+
+test('compareReduction labels a result that fixed more or fewer findings than expected', () => {
+  const more = {fixed: [...Array(8).fill({risk_level: 'high'}), {risk_level: 'medium'}]};
+  assert.equal(compareReduction(expected, more).label, 'more than expected');
+  const fewer = {fixed: [{risk_level: 'high'}]};
+  assert.equal(compareReduction(expected, fewer).label, 'less than expected');
+  const same = {fixed: [...Array(6).fill({risk_level: 'high'}), {risk_level: 'medium'}]};
+  assert.equal(compareReduction(expected, same).label, 'as expected');
+});
