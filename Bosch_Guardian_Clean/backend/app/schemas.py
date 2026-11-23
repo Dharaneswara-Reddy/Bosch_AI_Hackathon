@@ -6,6 +6,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from guardian.decisions import ReviewSummary
 from guardian.fetch import FetchedFile
 from guardian.models import (
     AgentClaim,
@@ -72,3 +73,4 @@ class ScanResult(BaseModel):
     agent_trace: list[AgentTrace] = Field(default_factory=list)
     risk_adjustments: list[RiskAdjustment] = Field(default_factory=list)
     agreement: dict[str, bool] = Field(default_factory=dict)
+    review_summary: ReviewSummary = Field(default_factory=ReviewSummary)

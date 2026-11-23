@@ -12,7 +12,7 @@ from guardian.ai.llm import FALLBACK_PROVIDERS
 from guardian.fetch import FetchError
 from guardian.models import GraphArtifact
 
-from . import pipeline
+from . import pipeline, review
 from .schemas import ScanRecord, ScanRequest, ScanResult, ScanStarted
 
 pipeline.load_root_env()
@@ -119,3 +119,6 @@ def scan_sbom(scan_id: str) -> FileResponse:
 @app.get("/scan/{scan_id}/report")
 def scan_report(scan_id: str) -> FileResponse:
     return FileResponse(_artifact(scan_id, "report.html"), media_type="text/html")
+
+
+app.include_router(review.build_router(_finished))

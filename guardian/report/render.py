@@ -11,6 +11,7 @@ from urllib.parse import quote
 from jinja2 import Environment, FileSystemLoader
 from pydantic import BaseModel
 
+from guardian.decisions import DecisionLog, apply_decisions
 from guardian.models import (
     AgentTrace,
     CoverageArtifact,
@@ -183,7 +184,9 @@ def render(run_dir: Path) -> None:
         lstrip_blocks=True,
     )
     environment.filters["md"] = _markdown
-    ranked = _ranked(artifacts.findings)
+    decisions = DecisionLog(root).history()
+    findings = apply_decisions(artifacts.findings, decisions)
+    ranked = _ranked(findings)
     analysis = [item for item in artifacts.claims if item.step != FIX_STEP]
     reviewed = _reviewed(artifacts.agent_trace)
     groups = _groups(ranked, graph, reviewed)
@@ -199,7 +202,7 @@ def render(run_dir: Path) -> None:
         "relevance_known": any(f.relevance and f.relevance.verdict != "unknown" for f in ranked),
         "suspicious": [
             item
-            for item in artifacts.findings
+            for item in findings
             if item.kind in (FindingKind.ANOMALY, FindingKind.MALICIOUS)
         ],
         "entries": _entry_paths([group["finding"] for group in groups], graph),
@@ -211,6 +214,7 @@ def render(run_dir: Path) -> None:
         "risk_adjustments": artifacts.risk_adjustments,
         "trace": artifacts.agent_trace,
         "unknowns": _unknowns(scan, ranked),
+        "human_decisions": decisions,
         "has_sbom": (root / "sbom.cdx.json").is_file(),
     }
     for name in ("report.html", "report.md"):

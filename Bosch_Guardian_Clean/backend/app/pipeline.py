@@ -11,6 +11,7 @@ from uuid import uuid4
 
 from guardian import runner
 from guardian.ai.llm import read_env_file
+from guardian.decisions import DecisionLog, apply_decisions, summarize
 from guardian.fetch import (
     MANIFEST_NAME,
     FetchedFile,
@@ -141,12 +142,14 @@ def load_result(record: ScanRecord) -> ScanResult:
         "coverage": json.loads((out / "coverage.json").read_text(encoding="utf-8")),
         **json.loads((out / "findings.json").read_text(encoding="utf-8")),
     })
+    decisions = DecisionLog(out).latest()
+    findings = apply_decisions(run.findings, list(decisions.values()))
     counts: dict[str, int] = {}
-    for finding in run.findings:
+    for finding in findings:
         counts[finding.risk_level.value] = counts.get(finding.risk_level.value, 0) + 1
     return ScanResult(
-        scan=run.scan, findings=run.findings, evidence=run.evidence, coverage=run.coverage,
+        scan=run.scan, findings=findings, evidence=run.evidence, coverage=run.coverage,
         counts_by_risk=counts, fetch=_fetch_summary(record), claims=run.claims,
         agent_trace=run.agent_trace, risk_adjustments=run.risk_adjustments,
-        agreement=run.agreement,
+        agreement=run.agreement, review_summary=summarize(run.findings, decisions),
     )

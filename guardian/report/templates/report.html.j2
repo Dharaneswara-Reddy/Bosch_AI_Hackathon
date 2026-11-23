@@ -166,6 +166,11 @@ details.finding-row > summary { display:flex; flex-wrap:wrap; gap:.4rem .7rem; a
 {% for row in coverage.rows %}<tr><td>{{ row.detector }}</td><td>{{ row.ecosystem }}</td><td>{{ row.status }}</td><td>{{ row.components_seen }}</td><td>{{ row.reason or "UNKNOWN" }}</td></tr>{% endfor %}
 </tbody></table></div>{% else %}<p>No detector coverage recorded.</p>{% endif %}
 </section>
+<section id="decisions"><h2>Human review decisions</h2>
+{% if human_decisions %}<div class="table"><table><thead><tr><th>Finding</th><th>Decision</th><th>Reviewer</th><th>Note</th><th>When</th></tr></thead><tbody>
+{% for item in human_decisions %}<tr><td><code>{{ item.finding_id }}</code></td><td>{{ item.decision }}</td><td>{{ item.reviewer }}</td><td>{{ item.note }}</td><td>{{ item.decided_at.isoformat() }}</td></tr>
+{% endfor %}</tbody></table></div>{% else %}<p>No findings have been reviewed by a human.</p>{% endif %}
+</section>
 <section id="unknowns"><h2>Remaining unknowns and limitations</h2>
 <ul>{% for item in unknowns %}<li>{{ item }}</li>{% endfor %}</ul>
 </section>

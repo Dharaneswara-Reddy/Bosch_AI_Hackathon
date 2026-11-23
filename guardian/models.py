@@ -253,6 +253,8 @@ class Finding(BaseModel):
     ai_adjusted: bool = False
     ai_adjustment_reason: str | None = None
     ai_adjustment_evidence_ids: list[str] = Field(default_factory=list)
+    human_decision: str | None = None
+    human_note: str | None = None
 
 
 class AgentClaim(BaseModel):
