@@ -47,6 +47,7 @@ from guardian.models import (
     Scope,
 )
 from guardian.policy import DEFAULT_POLICY_PATH, load_policy
+from guardian.remediate.candidates import merge_proposals, rule_based_proposals
 from guardian.risk import assess
 from guardian.tools import ToolError
 
@@ -111,7 +112,7 @@ def _checkpoint(context: ScanContext) -> None:
     findings = FindingsArtifact(
         findings=result.findings, evidence=result.evidence, claims=result.claims,
         agent_trace=result.agent_trace, risk_adjustments=result.risk_adjustments,
-        agreement=result.agreement,
+        agreement=result.agreement, proposals=result.proposals,
     )
     for filename, data in zip(OUTPUT_FILES, (result.scan, result.graph, findings, result.coverage), strict=False):
         _write_model(context.out / filename, data)
@@ -344,9 +345,15 @@ def _review(context: ScanContext) -> None:
     result.scan.llm_status = review.llm_status
     result.risk_adjustments = review.risk_adjustments
     result.agreement = review.agreement
+    result.proposals = review.proposals
     policy = load_policy(DEFAULT_POLICY_PATH)
     adjusted = apply_adjustments(result.findings, review.risk_adjustments)
     result.findings = [apply_confidence(f, policy, review.agreement) for f in adjusted]
+
+
+def _propose(context: ScanContext) -> None:
+    result = context.result
+    result.proposals = merge_proposals(result.proposals, rule_based_proposals(result))
 
 
 def _render(run_dir: Path) -> None:
@@ -508,6 +515,7 @@ def _scan_context(context: ScanContext, clean_commit: bool, use_llm: bool) -> Ru
     result.evidence = context.evidence.records()
     if use_llm or context.inject_claim is not None:
         _attempt(context, "ai", _review, optional=True)
+    _attempt(context, "remediation", _propose)
     result.scan.status = (
         ScanStatus.PARTIAL if result.scan.errors.keys() - {"ai"} else ScanStatus.COMPLETE
     )

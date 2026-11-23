@@ -3,6 +3,7 @@ import {ReactFlow, Background, Controls, MarkerType} from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import {layoutSubgraph, selectSubgraph} from './graph-layout.js';
 import {Download, ExternalLink, FileText} from 'lucide-react';
+import {FixPanel} from './fixes.jsx';
 
 const API = '/api';
 const RISK_ORDER = ['critical', 'high', 'medium', 'low', 'unknown'];
@@ -276,7 +277,7 @@ export function Results({scanId, status, result, graph}) {
   const vulnerable = useMemo(() => new Set(vulns.map(f => f.component_id)), [result]);
   const claims = result.claims || [];
   const tabs = [['findings', `Findings (${vulns.length})`], ['anomalies', `Anomalies (${anomalies.length})`],
-    ['ai', `AI review (${claims.length})`], ['coverage', 'Coverage'], ['graph', 'Dependency graph']];
+    ['ai', `AI review (${claims.length})`], ['coverage', 'Coverage'], ['graph', 'Dependency graph'], ['fixes', 'Fixes']];
   const generated = result.fetch.files.filter(f => f.source === 'generated').map(f => f.path);
   return <>
     <div className="results-heading"><div><h2>Guardian results</h2>
@@ -303,6 +304,7 @@ export function Results({scanId, status, result, graph}) {
         {tab === 'anomalies' && <AnomalyTable anomalies={anomalies} evidence={evidence}/>}
         {tab === 'ai' && <AIReview claims={claims} llmStatus={result.scan.llm_status} trace={result.agent_trace || []}
           adjustments={result.risk_adjustments || []} agreement={result.agreement || {}}/>}
+        {tab === 'fixes' && <FixPanel scanId={scanId}/>}
         {tab === 'coverage' && <CoverageTable coverage={result.coverage}/>}
         {tab === 'graph' && (graph ? <GraphView graph={graph} nodes={nodes} vulnerable={vulnerable} path={path} onClearPath={() => setPath([])}/> : <div className="empty-state"><strong>No graph produced</strong></div>)}
       </div></section>

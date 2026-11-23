@@ -12,7 +12,7 @@ from guardian.ai.llm import FALLBACK_PROVIDERS
 from guardian.fetch import FetchError
 from guardian.models import GraphArtifact
 
-from . import pipeline
+from . import pipeline, remediation
 from .schemas import ScanRecord, ScanRequest, ScanResult, ScanStarted
 
 pipeline.load_root_env()
@@ -23,6 +23,7 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
+app.include_router(remediation.router)
 _default_base: Path | None = None
 
 

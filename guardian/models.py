@@ -307,6 +307,31 @@ class RiskAdjustment(BaseModel):
     rejected_reason: str | None = None
 
 
+class FixAction(StrEnum):
+    UPGRADE = "upgrade"
+    UPGRADE_PARENT = "upgrade_parent"
+    PIN_VERSION = "pin_version"
+    REMOVE_DEPENDENCY = "remove_dependency"
+    REPLACE_DEPENDENCY = "replace_dependency"
+    PIN_ACTION_SHA = "pin_action_sha"
+    PIN_IMAGE_DIGEST = "pin_image_digest"
+    ESCALATE_REVIEW = "escalate_review"
+
+
+class RemediationProposal(BaseModel):
+    proposal_id: str
+    finding_id: str
+    action: FixAction
+    target_version: str | None
+    rationale: str
+    rollback: str
+    breaking_change_risk: str
+    evidence_ids: list[str]
+    requires_human_approval: bool = True
+    validated: bool = False
+    rejected_reason: str | None = None
+
+
 class FindingsArtifact(BaseModel):
     findings: list[Finding] = Field(default_factory=list)
     evidence: list[Evidence] = Field(default_factory=list)
@@ -314,6 +339,7 @@ class FindingsArtifact(BaseModel):
     agent_trace: list[AgentTrace] = Field(default_factory=list)
     risk_adjustments: list[RiskAdjustment] = Field(default_factory=list)
     agreement: dict[str, bool] = Field(default_factory=dict)
+    proposals: list[RemediationProposal] = Field(default_factory=list)
 
 
 class EcosystemCoverage(BaseModel):
