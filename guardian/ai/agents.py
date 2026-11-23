@@ -46,6 +46,8 @@ from guardian.models import AgentClaim, AgentTrace, ClaimKind
 
 ANALYSTS = (VULN_ANALYST.name, CHANGE_ANALYST.name, ANALYST_REVISION.name)
 Update = dict[str, Any]
+# Small batches keep each request under low tokens-per-minute provider limits.
+PACK_BATCH = 5
 
 
 def claim_id(step: str, text: str, evidence_ids: list[str]) -> str:
@@ -65,7 +67,12 @@ def to_agent_claim(step: str, raw: LLMClaim) -> AgentClaim:
 
 
 def _trace(agent: str, runtime: AgentRuntime, before: int, **fields: Any) -> AgentTrace:
-    return AgentTrace(agent=agent, llm_calls=runtime.calls - before, **fields)
+    return AgentTrace(
+        agent=agent,
+        llm_calls=runtime.calls - before,
+        provider=runtime.answered_by.get(agent),
+        **fields,
+    )
 
 
 def _pack_view(pack: EvidencePack) -> dict[str, Any]:
@@ -75,9 +82,10 @@ def _pack_view(pack: EvidencePack) -> dict[str, Any]:
 class Agents:
     """Node functions bound to one run's runtime."""
 
-    def __init__(self, runtime: AgentRuntime, top_n: int) -> None:
+    def __init__(self, runtime: AgentRuntime, top_n: int, pack_batch: int = PACK_BATCH) -> None:
         self.rt = runtime
         self.top_n = top_n
+        self.pack_batch = pack_batch
 
     def _packs_by_finding(self, state: GuardianState) -> dict[str, EvidencePack]:
         return {p.finding_id: p for p in state.get("packs", [])}
@@ -118,12 +126,17 @@ class Agents:
         if not packs:
             return {"pending": pending, "trace": [AgentTrace(agent=agent.name, error="no input")]}
         before = self.rt.calls
-        data = {
-            "evidence_packs": [_pack_view(p) for p in packs],
-            "project_description": state.get("project_text", ""),
-        }
-        reply, error = self.rt.ask(agent, data, STRICT_REPLY_SCHEMA, LLMReply)
-        produced = [to_agent_claim(agent.name, c) for c in reply.claims] if reply else []
+        produced: list[AgentClaim] = []
+        error = None
+        for start in range(0, len(packs), self.pack_batch):
+            data = {
+                "evidence_packs": [_pack_view(p) for p in packs[start : start + self.pack_batch]],
+                "project_description": state.get("project_text", ""),
+            }
+            reply, error = self.rt.ask(agent, data, STRICT_REPLY_SCHEMA, LLMReply)
+            produced += [to_agent_claim(agent.name, c) for c in reply.claims] if reply else []
+            if error:
+                break
         trace = _trace(
             agent.name,
             self.rt,

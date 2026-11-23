@@ -26,7 +26,22 @@ code,pre { white-space:pre-wrap; overflow-wrap:anywhere }
 .edge { color:#5b6b7e; font-size:.8rem }
 .verdict { display:inline-block; padding:.1rem .5rem; border-radius:1rem; font-size:.8rem; font-weight:650; background:#e8eef5 }
 .v-relevant { background:#fde2df; color:#8e1d12 } .v-likely_relevant { background:#fdf0d5; color:#7a4a00 }
-.v-low_relevance { background:#e3f3e8; color:#1d5e33 } .v-unknown { background:#e8eef5; color:#33475e }
+.v-low_relevance { background:#e3f3e8; color:#1d5e33 }
+.badge { display:inline-block; min-width:4.6rem; text-align:center; padding:.12rem .45rem; border-radius:.3rem; font-size:.72rem; font-weight:700; letter-spacing:.04em; text-transform:uppercase; background:#e8eef5; color:#33475e }
+.r-critical { background:#8e1d12; color:#fff } .r-high { background:#fde2df; color:#8e1d12 }
+.r-medium { background:#fdf0d5; color:#7a4a00 } .r-low { background:#e3f3e8; color:#1d5e33 }
+.tag { display:inline-block; padding:.05rem .45rem; border-radius:1rem; font-size:.72rem; font-weight:650; background:#eef2f6; color:#33475e }
+.tag.ai { background:#ede9fe; color:#5b21b6 }
+.cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(8rem,1fr)); gap:.6rem; margin:1rem 0 0 }
+.card { background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.18); border-radius:.5rem; padding:.55rem .8rem }
+.card span { display:block; font-size:.72rem; letter-spacing:.06em; text-transform:uppercase; opacity:.75 }
+.card strong { font-size:1.5rem }
+header dl { display:grid; grid-template-columns:max-content 1fr; gap:.15rem 1rem; font-size:.85rem; margin:0 }
+header dd { margin:0 }
+.note { background:#f3f6fa; border-left:4px solid #005783; padding:.6rem .9rem; border-radius:.3rem; margin:.5rem 0 }
+details.finding-row { padding:.5rem .75rem }
+details.finding-row > summary { display:flex; flex-wrap:wrap; gap:.4rem .7rem; align-items:center; font-weight:500 }
+.pkg { font-family:ui-monospace,monospace; font-size:.88rem } .muted { color:#5b6b7e; font-size:.85rem }
 </style>
 </head>
 <body>
@@ -44,7 +59,16 @@ code,pre { white-space:pre-wrap; overflow-wrap:anywhere }
 {% if scan.cached_age_minutes is defined and scan.cached_age_minutes is not none %}<dt>Cache</dt><dd>Reused a scan from {{ scan.cached_age_minutes|round(1) }} minutes ago.</dd>{% endif %}
 {% if scan.errors is defined and scan.errors %}<dt>Stage issues</dt>{% for stage, issue in scan.errors.items() %}<dd>{{ stage }} — {{ issue }}</dd>{% endfor %}{% endif %}
 </dl>
+<div class="cards">
+{% for level in ["critical", "high", "medium", "low"] %}<div class="card"><span>{{ level }}</span><strong>{{ risk_counts.get(level, 0) }}</strong></div>{% endfor %}
+<div class="card"><span>Advisories</span><strong>{{ advisory_count }}</strong></div>
+</div>
 </header>
+<section id="summary">
+<p><strong>{{ findings|length }} findings</strong> across <strong>{{ advisory_count }} advisories</strong>, shown as {{ groups|length }} rows: platform builds of the same package (for example nokogiri for x86_64 and aarch64) share one row.</p>
+<p class="note">All {{ findings|length }} findings are listed. Triage sent the {{ reviewed_count }} highest-risk findings to the AI for explanation; those rows are tagged “AI reviewed”. Risk levels come from fixed rules, never from the AI.</p>
+{% if findings and not relevance_known %}<p class="note">Relevance could not be assessed for any finding: the application source code was not available, so reachability and development-or-production scope are unknown. Findings are ordered by risk level instead.</p>{% endif %}
+</section>
 <nav aria-label="Report sections">
 <a href="#inventory">SBOM</a><a href="#paths">How vulnerabilities enter</a><a href="#vulnerabilities">Ranked by relevance</a><a href="#suspicious">Suspicious packages</a><a href="#ai">AI analysis</a><a href="#fixes">Fix proposals</a><a href="#trace">Agent trace</a><a href="#coverage">Coverage</a><a href="#unknowns">Unknowns</a>
 </nav>
@@ -70,20 +94,21 @@ code,pre { white-space:pre-wrap; overflow-wrap:anywhere }
 <p>Risk <strong>{{ finding.risk_level or "UNKNOWN" }}</strong> · Rule {{ finding.risk_rule_id or "UNKNOWN" }} · Confidence {{ finding.confidence or "UNKNOWN" }} · State {{ finding.state }}.</p>
 {% if finding.risk_note is defined and finding.risk_note %}<p class="warning">{{ finding.risk_note }}</p>{% endif %}
 {% endmacro %}
-{% macro verdict(finding) %}{% if finding.relevance %}<span class="verdict v-{{ finding.relevance.verdict }}">{{ finding.relevance.verdict|replace("_", " ") }}</span>{% else %}<span class="verdict v-unknown">not assessed</span>{% endif %}{% endmacro %}
+{% macro verdict(finding) %}{% if finding.relevance and finding.relevance.verdict != "unknown" %}<span class="verdict v-{{ finding.relevance.verdict }}">{{ finding.relevance.verdict|replace("_", " ") }}</span>{% endif %}{% endmacro %}
+{% macro badge(level) %}<span class="badge r-{{ level or 'unrated' }}">{{ level or "unrated" }}</span>{% endmacro %}
 <section id="paths"><h2>How each vulnerability enters the application</h2>
-<p>Every hop comes from the lockfile resolver or the SBOM; the label after each arrow shows which. Paths that could not be resolved are shown as UNKNOWN.</p>
+<p>One row per advisory and package. Every hop comes from the lockfile resolver or the SBOM; the label after each arrow shows which.</p>
+{% if entries %}<div class="table"><table><thead><tr><th>Risk</th><th>Advisory</th><th>Path into the application</th></tr></thead><tbody>
 {% for row in entries %}{% set finding = row.finding %}
-<article><h3>{{ finding.advisory_id or finding.purl }} {{ verdict(finding) }}</h3>
-<p class="chain">{% for hop in row.hops %}{{ hop.label }}{% if hop.edge %} <span class="edge">→ ({{ hop.edge }})</span> {% endif %}{% else %}UNKNOWN path{% endfor %}</p>
-<p>Introduced by <strong>{{ row.introduced_by or "UNKNOWN" }}</strong> · {{ finding.path_count if finding.path_count is number else "UNKNOWN" }} path(s) into the application.</p></article>
-{% else %}<p>No vulnerabilities to trace.</p>{% endfor %}
+<tr><td>{{ badge(finding.risk_level) }}</td><td><code>{{ finding.advisory_id or finding.purl }}</code> {{ verdict(finding) }}</td>
+<td><span class="chain">{% for hop in row.hops %}{{ hop.label }}{% if hop.edge %} <span class="edge">→ ({{ hop.edge }})</span> {% endif %}{% else %}path not resolved{% endfor %}</span><br>
+<span class="muted">Introduced by <strong>{{ row.introduced_by or "UNKNOWN" }}</strong> · {{ finding.path_count if finding.path_count is number else "UNKNOWN" }} path(s)</span></td></tr>
+{% endfor %}</tbody></table></div>{% else %}<p>No vulnerabilities to trace.</p>{% endif %}
 </section>
 <section id="vulnerabilities"><h2>Vulnerabilities ranked by relevance</h2>
-<p>Relevance is decided by code from recorded signals: relevant, likely relevant, unknown, low relevance. It never declares a finding safe.</p>
-{% for finding in findings %}
-{% set component = components.get(finding.component_id) %}
-<details{% if loop.first %} open{% endif %}><summary>{{ verdict(finding) }} {{ finding.advisory_id or "UNKNOWN" }} — {{ component.name if component else finding.purl }} {{ component.version if component else "" }}</summary>
+<p>Ordered by code-computed relevance, then risk level. Open a row for its signals, fix and evidence. The Guardian never declares a finding safe.</p>
+{% for group in groups %}{% set finding = group.finding %}
+<details class="finding-row"{% if loop.first %} open{% endif %}><summary>{{ badge(finding.risk_level) }} <code>{{ finding.advisory_id or "UNKNOWN" }}</code> <span class="pkg">{{ group.name }} {{ group.versions|join(", ") }}</span>{% if group.count > 1 %} <span class="tag">{{ group.count }} builds</span>{% endif %} {{ verdict(finding) }}{% if group.ai %} <span class="tag ai">AI reviewed</span>{% endif %} <span class="muted">fix {{ finding.fixed_versions|join(", ") or "none listed" }}</span></summary>
 {% if finding.relevance %}<p>{{ finding.relevance.summary }}</p>
 <div class="table"><table><thead><tr><th>Signal</th><th>Value</th><th>Detail</th><th>Evidence</th></tr></thead><tbody>
 {% for signal in finding.relevance.signals %}<tr><td>{{ signal.name|replace("_", " ") }}</td><td><strong>{{ signal.value }}</strong></td><td>{{ signal.detail }}</td><td>{% for id in signal.evidence_ids %}<code>{{ id[:12] }}</code> {% else %}—{% endfor %}</td></tr>{% endfor %}

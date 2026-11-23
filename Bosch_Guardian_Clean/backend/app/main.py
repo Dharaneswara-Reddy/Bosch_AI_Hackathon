@@ -8,6 +8,7 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
+from guardian.ai.llm import FALLBACK_PROVIDERS
 from guardian.fetch import FetchError
 from guardian.models import GraphArtifact
 
@@ -62,19 +63,31 @@ def _artifact(scan_id: str, name: str) -> Path:
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    ai = os.environ.get("GUARDIAN_LLM_PROVIDER", "none") if pipeline.ai_enabled() else "off"
-    return {"status": "ok", "service": "bosch-guardian", "ai": ai}
+    if not pipeline.ai_enabled():
+        return {"status": "ok", "service": "bosch-guardian", "ai": "off"}
+    chain = [os.environ.get("GUARDIAN_LLM_PROVIDER", "none").strip().lower()]
+    for name in os.environ.get("GUARDIAN_LLM_FALLBACKS", "").split(","):
+        name = name.strip().lower()
+        if name in FALLBACK_PROVIDERS and os.environ.get(FALLBACK_PROVIDERS[name][0], "").strip():
+            chain.append(name)
+    return {"status": "ok", "service": "bosch-guardian", "ai": "→".join(chain)}
 
 
 @app.post("/scan", status_code=202)
 def start_scan(request: ScanRequest, background: BackgroundTasks) -> ScanStarted:
     try:
-        record = (pipeline.create_demo_record(scan_base()) if request.demo
-                  else pipeline.create_record(request.url, request.ref, scan_base()))
+        record = (
+            pipeline.create_demo_record(scan_base())
+            if request.demo
+            else pipeline.create_record(request.url, request.ref, scan_base())
+        )
     except FetchError as error:
         raise HTTPException(422, str(error)) from error
     background.add_task(
-        pipeline.run_pipeline, record, os.environ.get("GITHUB_TOKEN"), request.inject_fake_claim,
+        pipeline.run_pipeline,
+        record,
+        os.environ.get("GITHUB_TOKEN"),
+        request.inject_fake_claim,
     )
     return ScanStarted(scan_id=record.scan_id, status=record.status)
 
@@ -97,7 +110,8 @@ def scan_graph(scan_id: str) -> GraphArtifact:
 @app.get("/scan/{scan_id}/sbom")
 def scan_sbom(scan_id: str) -> FileResponse:
     return FileResponse(
-        _artifact(scan_id, "sbom.cdx.json"), media_type="application/json",
+        _artifact(scan_id, "sbom.cdx.json"),
+        media_type="application/json",
         filename="sbom.cdx.json",
     )
 

@@ -1,6 +1,7 @@
 import React, {useMemo, useState} from 'react';
-import {ReactFlow, Background, Controls, MiniMap, MarkerType} from '@xyflow/react';
+import {ReactFlow, Background, Controls, MarkerType} from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
+import {layoutSubgraph, selectSubgraph} from './graph-layout.js';
 import {Download, ExternalLink, FileText} from 'lucide-react';
 
 const API = '/api';
@@ -13,7 +14,8 @@ export function Badge({children, tone = 'neutral'}) {
 
 function componentLabel(componentId, nodes) {
   const node = nodes.get(componentId);
-  return node ? `${node.name}@${node.version}` : componentId;
+  if (!node) return componentId;
+  return node.version && node.version !== 'UNKNOWN' ? `${node.name}@${node.version}` : node.name;
 }
 
 function EvidenceLink({finding, evidence}) {
@@ -65,19 +67,22 @@ function FindingsTable({findings, evidence, nodes, selectedId, onSelect, onShowP
     return <div className="empty-state"><strong>No vulnerability findings reported</strong>
       <p>This is not proof the repository is safe. Check the coverage tab for gaps.</p></div>;
   }
-  return <div className="table-scroll"><p className="footnote">Ranked by relevance, then risk. Click a row to see why.</p>
+  const assessed = findings.some(f => f.relevance && f.relevance.verdict !== 'unknown');
+  return <div className="table-scroll"><p className="footnote">{assessed
+    ? 'Ranked by relevance, then risk. Click a row to see why.'
+    : 'Ranked by risk. Relevance and reachability could not be assessed: a URL scan fetches only manifest files, not the application source. Click a row for details.'}</p>
     <table><thead><tr>
-    <th>RELEVANCE</th><th>ADVISORY</th><th>PACKAGE</th><th>INTRODUCED BY</th><th>RISK</th>
-    <th>REACHABILITY · SCOPE</th><th>FIXED IN</th><th>DEPENDENCY PATH</th></tr></thead><tbody>
+    {assessed && <th>RELEVANCE</th>}<th>RISK</th><th>ADVISORY</th><th>PACKAGE</th><th>INTRODUCED BY</th>
+    {assessed && <th>REACHABILITY · SCOPE</th>}<th>FIXED IN</th><th>DEPENDENCY PATH</th></tr></thead><tbody>
     {rankFindings(findings).map(f => <React.Fragment key={f.finding_id}>
       <tr className={'clickable' + (selectedId === f.finding_id ? ' selected-row' : '')} onClick={() => onSelect(selectedId === f.finding_id ? null : f.finding_id)}>
-        <td><RelevanceBadge finding={f}/></td>
+        {assessed && <td><RelevanceBadge finding={f}/></td>}
+        <td className="nowrap"><Badge tone={RISK_TONE[f.risk_level]}>{f.risk_level}</Badge><br/><small>{f.risk_rule_id}</small></td>
         <td><strong>{f.advisory_id}</strong><br/><EvidenceLink finding={f} evidence={evidence}/></td>
         <td><code>{componentLabel(f.component_id, nodes) === f.component_id ? f.purl : componentLabel(f.component_id, nodes)}</code></td>
         <td>{f.relevance?.introduced_by || 'unknown'}</td>
-        <td><Badge tone={RISK_TONE[f.risk_level]}>{f.risk_level}</Badge> <small>{f.risk_rule_id}</small></td>
-        <td>{signal(f, 'reachability')} · {signal(f, 'dependency_scope')}</td>
-        <td>{f.fixed_versions.join(', ') || 'unknown'}</td>
+        {assessed && <td>{signal(f, 'reachability')} · {signal(f, 'dependency_scope')}</td>}
+        <td>{f.fixed_versions.join(', ') || 'none listed'}</td>
         <td className="source">{f.dependency_path.length ? f.dependency_path.map(id => componentLabel(id, nodes)).join(' → ') : 'unknown'}</td>
       </tr>
       {selectedId === f.finding_id && <SignalsRow finding={f} onShowPath={onShowPath}/>}
@@ -157,44 +162,63 @@ function CoverageTable({coverage}) {
     {coverage.warnings.map((w, i) => <p className="footnote" key={i}>{w}</p>)}</div>;
 }
 
-function GraphView({graph, nodes, vulnerable, path}) {
+function nodeStyle(id, {vulnerable, focus, onPath}) {
+  const hot = id === focus || onPath.has(id);
+  const bad = vulnerable.has(id);
+  return {border: hot ? '2px solid #c2410c' : `1px solid ${bad ? '#e08a7e' : '#b8d9c6'}`, borderRadius: 9,
+    background: hot ? '#fff1e6' : bad ? '#fff3f1' : '#ffffff', fontSize: 11, width: 190, padding: '6px 8px'};
+}
+
+function GraphView({graph, nodes, vulnerable, path, onClearPath}) {
+  const [all, setAll] = useState(false);
+  const [focus, setFocus] = useState(null);
+  const [query, setQuery] = useState('');
+  const labels = useMemo(() => new Map(graph.nodes.map(n => [componentLabel(n.component_id, nodes), n.component_id])), [graph, nodes]);
+  const view = path.length ? 'path' : focus ? 'focus' : all ? 'all' : 'vulnerable';
+  const reset = () => { onClearPath(); setFocus(null); setQuery(''); };
   const flow = useMemo(() => {
+    const sub = selectSubgraph(graph, {all, path, focus, vulnerable});
+    const positions = layoutSubgraph(sub);
     const onPath = new Set(path);
-    const ordered = [...path.map(id => graph.nodes.find(n => n.component_id === id)).filter(Boolean),
-      ...graph.nodes.filter(n => !onPath.has(n.component_id))];
-    const shown = ordered.slice(0, 130);
-    const ids = new Set(shown.map(n => n.component_id));
-    const pathEdges = new Set(path.slice(1).map((id, i) => `${path[i]}>${id}`));
     return {
-      nodes: shown.map((n, i) => {
-        const hot = onPath.has(n.component_id);
-        const k = i - onPath.size;
-        const left = onPath.size ? 260 : 0;
-        const position = hot ? {x: 0, y: path.indexOf(n.component_id) * 120}
-          : {x: left + (k % 6) * 190, y: Math.floor(k / 6) * 110};
-        return {
-          id: n.component_id, position,
-          data: {label: <div className="node-label"><strong>{n.name}</strong><small>{n.version}{n.dev ? ' · dev' : ''}</small></div>},
-          style: {border: (hot ? '2px solid #c2410c' : '1px solid ' + (vulnerable.has(n.component_id) ? '#e6a69e' : '#b8d9c6')),
-            borderRadius: 9, background: hot ? '#fff1e6' : vulnerable.has(n.component_id) ? '#fff3f1' : '#ffffff',
-            fontSize: 11, width: 164, padding: 8},
-        };
+      count: sub.ids.size,
+      nodes: [...sub.ids].map(id => {
+        const n = nodes.get(id);
+        return {id, position: positions.get(id) || {x: 0, y: 0}, sourcePosition: 'right', targetPosition: 'left',
+          data: {label: <div className="node-label"><strong>{n?.name || id}</strong>
+            <small>{n?.version}{n?.dev ? ' · dev' : ''}{vulnerable.has(id) ? ' · vulnerable' : ''}</small></div>},
+          style: nodeStyle(id, {vulnerable, focus, onPath})};
       }),
-      edges: graph.edges.filter(e => ids.has(e.parent_id) && ids.has(e.child_id)).map((e, i) => {
-        const hot = pathEdges.has(`${e.parent_id}>${e.child_id}`);
-        return {id: `edge-${i}`, source: e.parent_id, target: e.child_id, animated: hot,
-          label: hot ? e.edge_source : undefined,
-          markerEnd: {type: MarkerType.ArrowClosed, color: hot ? '#c2410c' : '#a3b5aa'},
-          style: {stroke: hot ? '#c2410c' : '#b6c8bd', strokeWidth: hot ? 2.5 : 1}};
+      edges: sub.edges.map((e, i) => {
+        const hot = view === 'path' || e.parent_id === focus || e.child_id === focus;
+        const color = hot ? '#c2410c' : '#9fb5a8';
+        return {id: `edge-${i}`, source: e.parent_id, target: e.child_id, animated: hot && view === 'path',
+          markerEnd: {type: MarkerType.ArrowClosed, color},
+          style: {stroke: color, strokeWidth: hot ? 2.2 : 1.2, opacity: view === 'all' ? 0.35 : 1}};
       }),
     };
-  }, [graph, vulnerable, path]);
-  const chain = path.map(id => componentLabel(id, nodes)).join(' → ');
-  return <div className="graph-content"><div className="graph-top"><div><strong>Dependency graph</strong>
-    <p>{path.length ? <>Highlighted: how the selected vulnerability enters the app: <code>{chain}</code></>
-      : <>Showing up to 130 of {nodes.size} components. Select a finding and choose "Show this path" to highlight how it enters the app.</>}</p></div></div>
-    <div className="graph-frame"><ReactFlow fitView nodes={flow.nodes} edges={flow.edges}>
-      <Background color="#e7eee9" gap={20}/><Controls showInteractive={false}/><MiniMap pannable zoomable nodeColor="#7bb999"/>
+  }, [graph, nodes, vulnerable, path, focus, all, view]);
+  const describe = {
+    path: <>How the selected vulnerability enters the app: <code>{path.map(id => componentLabel(id, nodes)).join(' → ')}</code></>,
+    focus: <>How <code>{componentLabel(focus, nodes)}</code> enters the app, with its direct parents and dependencies.</>,
+    all: <>All {flow.count} components, arranged left to right by depth from the manifest files.</>,
+    vulnerable: flow.count ? <>Shortest route from a manifest file to each of the {vulnerable.size} vulnerable packages ({flow.count} components). Click any package to focus on it.</>
+      : <>No vulnerable package is linked to a graph node. Switch to "All components".</>,
+  }[view];
+  return <div className="graph-content">
+    <div className="graph-toolbar">
+      <button className={view === 'vulnerable' ? 'small' : 'outline small'} onClick={() => { reset(); setAll(false); }}>Vulnerable paths</button>
+      <button className={view === 'all' ? 'small' : 'outline small'} onClick={() => { reset(); setAll(true); }}>All components</button>
+      <input className="graph-search" list="graph-components" placeholder={`Find a package (${nodes.size})`} value={query}
+        onChange={e => { setQuery(e.target.value); const id = labels.get(e.target.value); if (id) { onClearPath(); setFocus(id); } }}/>
+      <datalist id="graph-components">{[...labels.keys()].sort().map(l => <option key={l} value={l}/>)}</datalist>
+      {(view === 'focus' || view === 'path') && <button className="outline small" onClick={reset}>Clear</button>}
+    </div>
+    <p className="graph-caption">{describe}</p>
+    <div className="graph-frame"><ReactFlow key={`${view}|${focus}|${path.join()}`} fitView fitViewOptions={{padding: 0.15}}
+      minZoom={0.05} nodes={flow.nodes} edges={flow.edges} nodesConnectable={false} onlyRenderVisibleElements
+      onNodeClick={(_, n) => { onClearPath(); setFocus(n.id); setQuery(componentLabel(n.id, nodes)); }}>
+      <Background color="#e7eee9" gap={20}/><Controls showInteractive={false}/>
     </ReactFlow></div></div>;
 }
 
@@ -237,7 +261,7 @@ export function Results({scanId, status, result, graph}) {
         {tab === 'anomalies' && <AnomalyTable anomalies={anomalies} evidence={evidence}/>}
         {tab === 'ai' && <AIReview claims={claims} llmStatus={result.scan.llm_status} trace={result.agent_trace || []}/>}
         {tab === 'coverage' && <CoverageTable coverage={result.coverage}/>}
-        {tab === 'graph' && (graph ? <GraphView graph={graph} nodes={nodes} vulnerable={vulnerable} path={path}/> : <div className="empty-state"><strong>No graph produced</strong></div>)}
+        {tab === 'graph' && (graph ? <GraphView graph={graph} nodes={nodes} vulnerable={vulnerable} path={path} onClearPath={() => setPath([])}/> : <div className="empty-state"><strong>No graph produced</strong></div>)}
       </div></section>
   </>;
 }

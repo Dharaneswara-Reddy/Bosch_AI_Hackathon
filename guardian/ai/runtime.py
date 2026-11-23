@@ -38,6 +38,7 @@ class AgentRuntime:
     open_reason: str | None = None
     attempted: set[str] = field(default_factory=set)
     succeeded: set[str] = field(default_factory=set)
+    answered_by: dict[str, str] = field(default_factory=dict)
 
     @property
     def blocked(self) -> str | None:
@@ -64,6 +65,9 @@ class AgentRuntime:
             parsed, error, retry = self._attempt(system, user, schema, reply)
             if parsed is not None:
                 self.succeeded.add(agent.name)
+                self.answered_by[agent.name] = (
+                    getattr(self.client, "last_used", None) or self.client.name
+                )
                 return parsed, None
             if not retry:
                 break
@@ -91,9 +95,11 @@ class AgentRuntime:
             return None, self.open_reason, False
 
     def _call(self, system: str, user: str, schema: JsonSchema) -> dict[str, Any]:
+        # Each provider in a fallback chain gets its own deadline, so the outer wait covers all.
+        budget = self.timeout * max(1, len(getattr(self.client, "labels", [])))
         future = _EXECUTOR.submit(self.client.complete, system, user, schema, self.timeout)
         try:
-            return future.result(timeout=self.timeout)
+            return future.result(timeout=budget)
         except FutureTimeout as exc:
             future.cancel()
-            raise LLMTimeout(f"No reply within {self.timeout:.0f}s.") from exc
+            raise LLMTimeout(f"No reply within {budget:.0f}s.") from exc

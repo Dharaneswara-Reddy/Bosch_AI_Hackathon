@@ -19,7 +19,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from pydantic import BaseModel, Field
 
-from guardian.ai.agents import Agents, to_agent_claim
+from guardian.ai.agents import PACK_BATCH, Agents, to_agent_claim
 from guardian.ai.context import ReviewContext
 from guardian.ai.guardrails import find_injection_markers
 from guardian.ai.llm import LLMClient
@@ -82,10 +82,11 @@ def run_ai_review(
     injected: list[AgentClaim] | None = None,
     timeout: float = DEFAULT_TIMEOUT_S,
     top_n: int = DEFAULT_TOP_N,
+    pack_batch: int = PACK_BATCH,
 ) -> AIReviewResult:
     """Run the agent graph once. Never raises for LLM problems."""
     runtime = AgentRuntime(ctx=ctx, client=client, timeout=timeout)
-    agents = Agents(runtime, top_n)
+    agents = Agents(runtime, top_n, pack_batch)
     initial: GuardianState = {
         "pending": list(injected or []),
         "claims": [],
@@ -103,8 +104,20 @@ def run_ai_review(
         step_errors=final.get("errors", {}),
         injection_markers=find_injection_markers(f"{packs_json} {ctx.project_text}"),
         secrets_redacted=runtime.redactions,
-        trace=final.get("trace", []),
+        trace=[*final.get("trace", []), *_provider_trace(client)],
     )
+
+
+def _provider_trace(client: LLMClient) -> list[AgentTrace]:
+    """One row naming the provider chain, which providers failed, and which were skipped."""
+    labels: list[str] = getattr(client, "labels", [])
+    if not labels:
+        return []
+    failed: dict[str, str] = getattr(client, "failed", {})
+    skipped: dict[str, str] = getattr(client, "skipped", {})
+    notes = [f"{label} failed: {reason}" for label, reason in failed.items()]
+    notes += [f"{name}: {reason}" for name, reason in skipped.items()]
+    return [AgentTrace(agent="llm_providers", produced=labels, error="; ".join(notes) or None)]
 
 
 def load_injected_claims(path: Path, ctx: ReviewContext) -> list[AgentClaim]:

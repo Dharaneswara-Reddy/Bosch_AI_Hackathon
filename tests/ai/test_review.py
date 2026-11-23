@@ -39,6 +39,20 @@ def test_fixture_claims_are_rejected_with_reasons_and_llm_off_is_unavailable() -
     assert "evidence ID not found" in (claims[1].rejected_reason or "")
 
 
+def test_review_client_chains_configured_fallbacks_after_the_primary() -> None:
+    from pydantic import SecretStr
+
+    from guardian.ai.llm import FallbackClient
+    from guardian.ai.review import review_client
+
+    settings = Settings(provider="groq", api_key=SecretStr("gsk_test"), model="openai/gpt-oss-120b")
+    env = {"GUARDIAN_LLM_FALLBACKS": "gemini,openai", "GEMINI_API_KEY": "g-key"}
+    client = review_client(settings, env)
+    assert isinstance(client, FallbackClient)
+    assert client.labels == ["groq:openai/gpt-oss-120b", "gemini:gemini-2.5-flash"]
+    assert client.skipped == {"openai": "skipped: no key"}
+
+
 def test_single_claim_object_is_accepted(tmp_path: Path) -> None:
     path = tmp_path / "claim.json"
     path.write_text(

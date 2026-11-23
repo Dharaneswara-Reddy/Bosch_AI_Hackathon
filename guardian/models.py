@@ -223,6 +223,7 @@ class AgentTrace(BaseModel):
     rejected: int = 0
     llm_calls: int = 0
     error: str | None = None
+    provider: str | None = None
 
 
 class CoverageRow(BaseModel):

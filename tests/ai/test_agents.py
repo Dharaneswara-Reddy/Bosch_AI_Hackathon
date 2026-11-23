@@ -273,3 +273,23 @@ def test_triage_ranks_by_relevance_before_risk() -> None:
     )
     ctx = ReviewContext.build([low, relevant], base.evidence.values(), base.components.values())
     assert [f.finding_id for f in ctx.top_findings(2)] == ["f-leftpad", "f-jwt"]
+
+
+def _many_vulns(count: int) -> ReviewContext:
+    base = make_context()
+    findings = list(base.findings.values())
+    jwt = base.findings["f-jwt"]
+    findings += [jwt.model_copy(update={"finding_id": f"f-jwt-{i}"}) for i in range(count - 1)]
+    return ReviewContext.build(
+        findings, list(base.evidence.values()), list(base.components.values())
+    )
+
+
+def test_vuln_analyst_sends_evidence_packs_in_bounded_batches() -> None:
+    llm = RoutingLLM(vuln_analyst=_claims(JWT_CLAIM))
+    result = run_ai_review(_many_vulns(5), llm, pack_batch=2)
+    prompts = [u for a, _, u in llm.calls if a == "vuln_analyst"]
+    assert len(prompts) == 3
+    assert [p.count('"finding_id"') for p in prompts] == [2, 2, 1]
+    analyst = [t for t in result.trace if t.agent == "vuln_analyst"]
+    assert len(analyst) == 1 and len(analyst[0].consumed) == 5
