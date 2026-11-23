@@ -49,9 +49,32 @@ function RelevanceBadge({finding}) {
   return <Badge tone={RELEVANCE_TONE[verdict]}>{verdict.replace('_', ' ')}</Badge>;
 }
 
+const DECISION_LABEL = {act: 'Act', attend: 'Attend', track_star: 'Track*', track: 'Track'};
+
+function ConfidenceCell({finding}) {
+  const score = finding.confidence_score;
+  return <td className="nowrap">
+    {score == null ? 'n/a' : score.toFixed(2)}
+    {finding.review_required && <><br/><Badge tone="red">needs review</Badge></>}
+  </td>;
+}
+
+function RiskReasons({finding}) {
+  if (!finding.risk_reasons?.length && !finding.review_required) return null;
+  return <div className="risk-reasons">
+    {finding.ssvc_decision && <p className="signals-summary">
+      <strong>{DECISION_LABEL[finding.ssvc_decision]}</strong>
+      {finding.risk_score != null && ` · score ${finding.risk_score}/100`}
+      {finding.confidence_score != null && ` · confidence ${finding.confidence_score.toFixed(2)}`}</p>}
+    <ul>{finding.risk_reasons.map(reason => <li key={reason}>{reason}</li>)}</ul>
+    {finding.review_required && <p className="signals-summary"><strong>Needs human review:</strong> {finding.review_reasons.join('; ')}</p>}
+  </div>;
+}
+
 function SignalsRow({finding, onShowPath}) {
   const r = finding.relevance;
-  return <tr className="signals-row"><td colSpan={8}>
+  return <tr className="signals-row"><td colSpan={9}>
+    <RiskReasons finding={finding}/>
     {r ? <><p className="signals-summary">{r.summary}</p>
       <table className="signals"><tbody>{r.signals.map(s => <tr key={s.name}>
         <th>{s.name.replaceAll('_', ' ')}</th><td><strong>{s.value}</strong></td><td>{s.detail}</td>
@@ -73,15 +96,16 @@ function FindingsTable({findings, evidence, nodes, selectedId, onSelect, onShowP
     : 'Ranked by risk. Relevance and reachability could not be assessed: a URL scan fetches only manifest files, not the application source. Click a row for details.'}</p>
     <table><thead><tr>
     {assessed && <th>RELEVANCE</th>}<th>RISK</th><th>ADVISORY</th><th>PACKAGE</th><th>INTRODUCED BY</th>
-    {assessed && <th>REACHABILITY · SCOPE</th>}<th>FIXED IN</th><th>DEPENDENCY PATH</th></tr></thead><tbody>
+    {assessed && <th>REACHABILITY · SCOPE</th>}<th>CONFIDENCE</th><th>FIXED IN</th><th>DEPENDENCY PATH</th></tr></thead><tbody>
     {rankFindings(findings).map(f => <React.Fragment key={f.finding_id}>
       <tr className={'clickable' + (selectedId === f.finding_id ? ' selected-row' : '')} onClick={() => onSelect(selectedId === f.finding_id ? null : f.finding_id)}>
         {assessed && <td><RelevanceBadge finding={f}/></td>}
-        <td className="nowrap"><Badge tone={RISK_TONE[f.risk_level]}>{f.risk_level}</Badge><br/><small>{f.risk_rule_id}</small></td>
+        <td className="nowrap"><Badge tone={RISK_TONE[f.risk_level]}>{f.risk_level}</Badge><br/><small>{f.risk_rule_id}{f.risk_score != null && ` · ${f.risk_score}`}</small></td>
         <td><strong>{f.advisory_id}</strong><br/><EvidenceLink finding={f} evidence={evidence}/></td>
         <td><code>{componentLabel(f.component_id, nodes) === f.component_id ? f.purl : componentLabel(f.component_id, nodes)}</code></td>
         <td>{f.relevance?.introduced_by || 'unknown'}</td>
         {assessed && <td>{signal(f, 'reachability')} · {signal(f, 'dependency_scope')}</td>}
+        <ConfidenceCell finding={f}/>
         <td>{f.fixed_versions.join(', ') || 'none listed'}</td>
         <td className="source">{f.dependency_path.length ? f.dependency_path.map(id => componentLabel(id, nodes)).join(' → ') : 'unknown'}</td>
       </tr>
