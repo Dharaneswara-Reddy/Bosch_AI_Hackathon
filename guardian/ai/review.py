@@ -5,9 +5,10 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
 from guardian.ai.agents import PACK_BATCH
-from guardian.ai.context import ReviewContext
+from guardian.ai.context import RISK_ORDER, ReviewContext
 from guardian.ai.graph import load_injected_claims, run_ai_review
 from guardian.ai.llm import (
     GROQ_DEFAULT_MODEL,
@@ -18,7 +19,7 @@ from guardian.ai.llm import (
     read_env_file,
     with_fallbacks,
 )
-from guardian.config import Settings
+from guardian.config import AI_CONCURRENCY, AI_MAX_GROUPS, AI_MIN_RISK, Settings
 from guardian.models import AgentClaim, AgentTrace, LlmStatus, RunResult
 
 
@@ -45,6 +46,32 @@ def review_client(settings: Settings, env: Mapping[str, str]) -> LLMClient:
     return with_fallbacks(primary, label, env)
 
 
+def _positive_int(env: Mapping[str, str], name: str, default: int) -> int:
+    raw = env.get(name, "").strip()
+    try:
+        value = int(raw) if raw else default
+    except ValueError:
+        value = 0
+    if value < 1:
+        raise ValueError(f"{name} must be a whole number of at least 1, not '{raw}'.")
+    return value
+
+
+def review_options(env: Mapping[str, str]) -> dict[str, Any]:
+    """Policy and concurrency settings for one review; a bad value fails at startup."""
+    min_risk = env.get("GUARDIAN_AI_MIN_RISK", "").strip().lower() or AI_MIN_RISK
+    if min_risk not in RISK_ORDER:
+        raise ValueError(
+            f"GUARDIAN_AI_MIN_RISK must be one of {', '.join(RISK_ORDER)}, not '{min_risk}'."
+        )
+    return {
+        "min_risk": min_risk,
+        "max_groups": _positive_int(env, "GUARDIAN_AI_MAX_GROUPS", AI_MAX_GROUPS),
+        "pack_batch": _positive_int(env, "GUARDIAN_LLM_PACK_BATCH", PACK_BATCH),
+        "concurrency": _positive_int(env, "GUARDIAN_LLM_CONCURRENCY", AI_CONCURRENCY),
+    }
+
+
 def run_review(
     result: RunResult,
     settings: Settings,
@@ -56,6 +83,6 @@ def run_review(
         review_client(settings, env),
         injected=injected,
         timeout=float(settings.timeout_s),
-        pack_batch=int(env.get("GUARDIAN_LLM_PACK_BATCH", PACK_BATCH)),
+        **review_options(env),
     )
     return review.claims, review.llm_status, review.trace

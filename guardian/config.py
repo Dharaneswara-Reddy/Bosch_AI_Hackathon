@@ -6,7 +6,9 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field, SecretStr, model_validator
 
-AI_TOP_N = 20
+AI_MIN_RISK = "medium"
+AI_MAX_GROUPS = 200
+AI_CONCURRENCY = 4
 TOOL_TIMEOUT_S = 180
 IMAGE_DIGEST = re.compile(r"[^\s@]+@sha256:[a-f0-9]{64}")
 

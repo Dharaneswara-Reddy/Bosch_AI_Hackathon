@@ -123,7 +123,9 @@ class AgentRuntime:
                 self.open_reason = reason
         return reason
 
-    def _invoke(self, system: str, user: str, schema: JsonSchema) -> tuple[dict[str, Any], str | None]:
+    def _invoke(
+        self, system: str, user: str, schema: JsonSchema
+    ) -> tuple[dict[str, Any], str | None]:
         result = self.client.complete(system, user, schema, self.timeout)
         return result, getattr(self.client, "last_used", None)
 

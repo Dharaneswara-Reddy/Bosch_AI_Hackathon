@@ -7,7 +7,7 @@ change a risk level, accept something a check rejected, or propose a fix outside
 computed. The scan never depends on the AI: if the model is off, slow or broken, every finding and its
 evidence are still reported.
 
-Built with **LangGraph** (orchestration: `StateGraph`, conditional edge, typed state) and
+Built with **LangGraph** (orchestration: `StateGraph`, `Send` fan-out, list reducers, typed state) and
 **LangChain** (`langchain-groq` `ChatGroq` model behind a small adapter). Default model on Groq:
 `openai/gpt-oss-120b` with strict structured outputs.
 
@@ -19,9 +19,12 @@ Built with **LangGraph** (orchestration: `StateGraph`, conditional edge, typed s
 graph TD
     START([start]) --> triage
     triage["triage<br/><i>code</i>"] --> relevance["relevance<br/><i>code</i>"]
-    relevance --> vuln_analyst["vuln_analyst<br/><i>LLM</i>"]
-    vuln_analyst --> change_analyst["change_analyst<br/><i>LLM</i>"]
-    change_analyst --> evidence_validator["evidence_validator<br/><i>code</i>"]
+    relevance -. "Send per package group" .-> vuln_analyst["vuln_analyst<br/><i>LLM</i>"]
+    relevance -. "Send (anomalies only)" .-> change_analyst["change_analyst<br/><i>LLM</i>"]
+    relevance -. "Send" .-> risk_analyst["risk_analyst<br/><i>LLM, checked by code</i>"]
+    vuln_analyst --> evidence_validator["evidence_validator<br/><i>code</i>"]
+    change_analyst --> evidence_validator
+    risk_analyst --> evidence_validator
     evidence_validator -. "claims rejected<br/>(once)" .-> analyst_revision["analyst_revision<br/><i>LLM</i>"]
     analyst_revision --> evidence_validator
     evidence_validator -.-> risk_critic["risk_critic<br/><i>LLM, checked by code</i>"]
@@ -33,15 +36,26 @@ graph TD
 
 `guardian.ai.graph.mermaid_diagram()` prints the live graph straight from LangGraph.
 
+**Parallel per package group.** Triage groups findings by package (purl type + name; versions and
+platform builds such as `nokogiri 1.19.0` and `1.19.0-aarch64-linux-gnu` share a group). Every
+group whose highest risk level reaches `GUARDIAN_AI_MIN_RISK` is reviewed (at most
+`GUARDIAN_AI_MAX_GROUPS`, highest risk first). After `relevance`, one `Send` per group starts its
+analysts side by side; their claims, risk adjustments and traces fan in through list reducers
+and pass through the evidence validator (deterministic, so one pass after the join is equivalent
+to one per branch). `GUARDIAN_LLM_CONCURRENCY` is passed to LangGraph as `max_concurrency`, so at
+most that many agent runs call the provider at once. The revision, critic, remediation and report
+steps then run once for the whole scan.
+
 | # | Agent | Kind | Consumes | Produces | What stops it going wrong |
 |---|---|---|---|---|---|
-| 1 | `triage` | code | all findings, evidence, components | **evidence packs** for the top 20 findings, ranked by relevance then risk (finding, package, version, dependency path, direct dependency, fixed versions, evidence records) | facts copied from tool output only |
+| 1 | `triage` | code | all findings, evidence, components | **package groups** at or above the policy minimum risk, each with **evidence packs** per finding (finding, package, version, dependency path, direct dependency, fixed versions, evidence records) | facts copied from tool output only |
 | 1b | `relevance` | code | the packs + each finding's `Relevance` (computed by the runner's relevance stage) | packs carrying the verdict and signals: version in affected range, scope, position, paths, fix, reachability, known exploited | signals come from the lockfile, the graph, scanner output and a static import search, never from a model |
 | 2 | `vuln_analyst` | LLM | packs of kind vulnerability / malicious | claims citing evidence IDs, explaining how the package enters the app and why it is or is not relevant | sees only its own packs; validated next |
 | 3 | `change_analyst` | LLM | packs of kind anomaly | claims citing evidence IDs | says "suspicious", never "malicious"; validated next |
+| 3b | `risk_analyst` | LLM | the group's packs (advisory, severity, relevance signals, path, fix) + project text (untrusted) | per finding at most one **one-level** `RiskAdjustment`, or none | `risk_rules.py`: exactly one step; malicious never lowered; known exploited + production never below high; every cited ID is the finding's own evidence; reason passes the evidence validator. Rejected adjustments are kept with the reason; accepted ones are never written into `Finding` |
 | 4 | `evidence_validator` | code | every pending claim (incl. `--inject-claim`) | accepted / rejected + reasons | the 7 checks below |
 | 5 | `analyst_revision` | LLM | the rejected claims **with their rejection reasons** + only the packs they cite | corrected claims | runs **at most once**; output goes back through the validator |
-| 6 | `risk_critic` | LLM | accepted analyst claims + only the packs they cite | a verdict per claim: supported / overstated / unsupported | code applies verdicts and can only make output **more conservative**: overstated → downgraded to inference with the reason, unsupported → rejected; it cannot accept a rejected claim, unknown claim IDs are ignored and logged |
+| 6 | `risk_critic` | LLM | accepted analyst claims and accepted risk adjustments + only the packs they cite | a verdict per claim and per adjustment: supported / overstated / unsupported (an adjustment that is not "supported" is rejected; `agreement[finding_id]` is true only when it is) | code applies verdicts and can only make output **more conservative**: overstated → downgraded to inference with the reason, unsupported → rejected; it cannot accept a rejected claim, unknown claim IDs are ignored and logged |
 | 7 | `remediation_candidates` | code | findings whose analysis survived validation and the critic | allowed fix actions, allowed target versions (scanner `fixed_versions` only), parent to upgrade, major-version flag | an LLM never decides what is allowed |
 | 8 | `remediation_planner` | LLM | the candidates + their packs | one fix proposal per finding: action, target version, rationale, rollback, breaking-change risk | proposal validator (below) |
 | 9 | `report_writer` | LLM | only validated claims and validated proposals | ≤ 5 summary claims | validated by the same evidence validator |
@@ -115,11 +129,16 @@ approve → sandbox branch → build/test → rescan flow consumes the validated
 - **Strict structured output:** each agent has its own strict JSON Schema sent to Groq
   (`response_format: json_schema, strict: true`) and a Pydantic model that re-validates the reply.
 - **30-second deadline per call**, **one retry** if the reply breaks the schema (HTTP 400 included).
-- **Circuit breaker:** the first timeout, network error, bad key or rate limit stops every later
-  agent from calling the model; `llm_status = failed`. Code-only agents still run.
+- **Circuit breaker:** three consecutive provider failures (timeout, network error, bad key, rate
+  limit) stop every later agent from calling the model; `llm_status = failed` only if no call
+  succeeded. One failing branch never stops the others. Code-only agents still run.
+- **Thread safety:** branches run in parallel, so `AgentRuntime` counters and `FallbackClient`'s
+  failed set are lock-guarded and the answering provider is tracked per thread and per branch.
 - **Least context:** each agent receives only the packs it needs (analysts their own kind; reviser
   and critic only the packs cited by the claims they handle).
-- **Top 20 findings only**, whatever the repository size: at most 6 agent calls per scan (each retried once at most if its reply breaks the schema).
+- **Bounded cost:** one call per package group and agent (packs go in batches of
+  `GUARDIAN_LLM_PACK_BATCH`), at most `GUARDIAN_AI_MAX_GROUPS` groups, groups below
+  `GUARDIAN_AI_MIN_RISK` skipped.
 
 ---
 
@@ -130,7 +149,8 @@ approve → sandbox branch → build/test → rescan flow consumes the validated
 | `graph.py` | LangGraph `StateGraph`, `run_ai_review(...)`, `AIReviewResult`, `load_injected_claims`, `mermaid_diagram` |
 | `agents.py` | The agent node functions and the critic-verdict rules |
 | `state.py` | Typed hand-offs: `EvidencePack`, `RemediationCandidate`, `RemediationProposal`, `AgentTrace`, `GuardianState`, `FixAction` |
-| `triage.py` | Builds evidence packs from tool output |
+| `triage.py` | Groups findings by package and builds evidence packs from tool output |
+| `risk_rules.py` | Deterministic checks on the risk analyst's adjustments |
 | `../relevance.py`, `../reachability.py`, `../scope.py`, `../analysis.py` | Code-only relevance stage that runs before the AI (signals, verdict, import evidence) |
 | `remediation.py` | Fix candidates, proposal validation, proposal → claim |
 | `validator.py` | Evidence validator (no AI) |
@@ -146,12 +166,15 @@ approve → sandbox branch → build/test → rescan flow consumes the validated
 
 ## Output
 
-`run_ai_review(ctx, client, injected=[], timeout=30, top_n=20) -> AIReviewResult`:
+`run_ai_review(ctx, client, injected=[], timeout=30, min_risk="medium", max_groups=200, pack_batch=5, concurrency=4) -> AIReviewResult`:
 
 | Field | Content |
 |---|---|
 | `claims` | every claim from every agent (`step` = agent name), accepted, inference or rejected with reasons; fix proposals appear as `remediation_planner` claims ("Proposed fix: … Rollback: … Requires human approval …") |
 | `proposals` | structured `RemediationProposal`s (validated or rejected) for Day 2 |
+| `risk_adjustments` | every `RiskAdjustment` (`finding_id`, `from_level`, `to_level`, `direction`, `reason`, `evidence_ids`, `status` accepted/rejected, `rejected_reason`) |
+| `agreement` | `{finding_id: bool}`: risk analyst and critic agree, for each finding with an accepted adjustment |
+| `provider_by_branch` | which provider answered each `agent:package-group` call |
 | `llm_status` | P5's `LlmStatus`: `ok`, `failed`, `unavailable` |
 | `trace` | one `AgentTrace` per agent run |
 | `llm_calls`, `step_errors`, `injection_markers`, `secrets_redacted` | for `run.json` |
@@ -170,6 +193,10 @@ GUARDIAN_LLM_PROVIDER=groq          # none | groq | openai_compatible
 GUARDIAN_LLM_API_KEY=gsk_...        # Groq key (create at https://console.groq.com/keys)
 GUARDIAN_LLM_MODEL=                 # optional, default openai/gpt-oss-120b
 GUARDIAN_LLM_TIMEOUT_S=30
+GUARDIAN_AI_MIN_RISK=medium         # critical | high | medium | low: lowest package risk the AI reviews
+GUARDIAN_AI_MAX_GROUPS=200          # safety cap on package groups per scan
+GUARDIAN_LLM_CONCURRENCY=4          # parallel agent runs (LangGraph max_concurrency)
+GUARDIAN_LLM_PACK_BATCH=5           # evidence packs per request
 ```
 
 `--no-llm` (or provider `none`) runs the code-only agents and validates `--inject-claim`, so the
@@ -205,7 +232,7 @@ python -m pytest tests/ai/test_groq_live.py -s   # real Groq run of the whole gr
 | `../test_relevance.py` | scope, reachability patterns, every verdict rule, Grype affected range and exploit data, demo-app ranking (reachable > unused > dev-only) |
 | `test_agents.py` | agent order and hand-offs (incl. relevance node); triage ranks by relevance; analysts see only their packs; one revision round with rejection reasons, never two; critic downgrades/rejects but cannot accept; critic rejection blocks remediation; proposals checked against code options; report writer validated; graph diagram |
 | `test_remediation.py` | candidates for transitive/direct/anomaly findings; invented version, disallowed action, downplayed major upgrade, foreign evidence, auto-apply wording, unknown finding, fake CVE in rationale all rejected; lockfile names allowed only in fixes |
-| `test_ai_failure.py` | AI off → `unavailable` + injected fake CVE rejected; timeout and provider error stop all agents after one call; schema retry; README injection has no effect; secrets redacted; top 20 only, ≤ 7 calls |
+| `test_ai_failure.py` | AI off → `unavailable` + injected fake CVE rejected; timeout and provider error trip the breaker; schema retry; README injection has no effect; secrets redacted; policy minimum and group cap bound the calls |
 | `test_validator.py` | the 8 evidence checks, including relevance statements |
 | `test_llm_client.py` | ChatGroq adapter: strict schema, no SDK retries, error mapping (400 retryable, 401/429 breaker, timeout); strict schemas match reply models; `.env` loading |
 | `test_review.py` | the runner adapter |
