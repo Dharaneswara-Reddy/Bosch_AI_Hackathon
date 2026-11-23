@@ -1,0 +1,8 @@
+{
+  "name": "guardian-detector-fixture",
+  "private": true,
+  "dependencies": {
+    "express": "4.18.2",
+    "unexpected-package": "*"
+  }
+}
