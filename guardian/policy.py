@@ -32,7 +32,7 @@ class ConfidenceWeights(_Strict):
 
     @property
     def total(self) -> float:
-        return sum(self.model_dump().values())
+        return float(sum(self.model_dump().values()))
 
 
 class RiskPolicy(_Strict):

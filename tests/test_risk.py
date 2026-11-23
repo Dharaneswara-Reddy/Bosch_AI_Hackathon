@@ -45,7 +45,7 @@ def test_cvss_critical_without_exploitation_in_dev_is_not_critical() -> None:
 
 
     """Missing data is not safety: unknown exploit data and scope keep the old R-CVE-U medium."""
-    """Missing data is not safety: no exploit data plus unknown scope keeps the old R-CVE-U medium."""
+    """Missing data is not safety: unknown exploit data and scope keep the old R-CVE-U medium."""
     result = assess(vuln("UNKNOWN"), dev=None, policy=POLICY)
     assert result.exploitation == Exploitation.UNKNOWN
     assert result.exposure == Exposure.LIMITED

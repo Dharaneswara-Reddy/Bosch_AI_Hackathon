@@ -121,7 +121,7 @@ def _score(base: float, percentile: float | None, exposure: Exposure, policy: Ri
     """0-100: base CVSS x10 x ((1-w)+w*EPSS percentile, 0.5 if unknown) x exposure factor."""
     weight = policy.epss_weight
     pct = 0.5 if percentile is None else percentile
-    factor = getattr(policy.exposure_factor, exposure.value)
+    factor: float = getattr(policy.exposure_factor, exposure.value)
     return round(min(100.0, base * 10 * ((1 - weight) + weight * pct) * factor))
 
 
