@@ -101,7 +101,7 @@ def test_run_grype_builds_docker_command_and_writes_output(
         assert kwargs["timeout"] == 600
         return subprocess.CompletedProcess(argv, 0, stdout='{"matches": []}', stderr="")
 
-    monkeypatch.setattr(grype.subprocess, "run", fake_run)
+    monkeypatch.setattr(subprocess, "run", fake_run)
     out = run_grype(sbom, tmp_path / "out")
     assert out == tmp_path / "out" / "raw" / "grype.json"
     assert out.read_text() == '{"matches": []}'
@@ -127,7 +127,7 @@ def test_run_grype_raises_with_stderr_tail(tmp_path: Path, monkeypatch: pytest.M
     def fake_run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
         return subprocess.CompletedProcess(argv, 1, stdout="", stderr="x" * 5000 + "boom")
 
-    monkeypatch.setattr(grype.subprocess, "run", fake_run)
+    monkeypatch.setattr(subprocess, "run", fake_run)
     with pytest.raises(GrypeError, match="boom"):
         run_grype(sbom, tmp_path / "out")
     assert not (tmp_path / "out" / "raw" / "grype.json").exists()
