@@ -142,3 +142,49 @@ def test_run_grype_raises_with_stderr_tail(tmp_path: Path, monkeypatch: pytest.M
     with pytest.raises(GrypeError, match="boom"):
         run_grype(sbom, tmp_path / "out")
     assert not (tmp_path / "out" / "raw" / "grype.json").exists()
+
+
+def _match(vuln_extra: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "vulnerability": {"id": "CVE-2026-0001", "severity": "Medium", **vuln_extra},
+        "artifact": {"purl": "pkg:gem/rack@3.0.0"},
+        "matchDetails": [{"type": "exact-direct-match"}],
+    }
+
+
+def test_epss_kev_and_cvss_are_kept_with_evidence() -> None:
+    raw = {"matches": [_match({
+        "epss": [
+            {"cve": "CVE-2026-0001", "epss": 0.1, "percentile": 0.9, "date": "2026-11-22"},
+            {"cve": "CVE-2026-0002", "epss": 0.33, "percentile": 0.98, "date": "2026-11-22"},
+        ],
+        "knownExploited": [{"cve": "CVE-2026-0001"}],
+        "cvss": [
+            {"vector": "CVSS:3.1/AV:L/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:L", "metrics": {"baseScore": 5.0}},
+            {"vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H", "metrics": {"baseScore": 9.8}},
+        ],
+    })]}
+    findings, evidence = parse_grype(raw, "raw/grype.json", SHA)
+    f = findings[0]
+    assert (f.epss, f.epss_percentile, f.epss_date) == (0.33, 0.98, "2026-11-22")
+    assert f.known_exploited is True
+    assert f.cvss_score == 9.8
+    assert f.cvss_vector == "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+    pointers = {e.evidence_id: e.pointer for e in evidence}
+    assert sorted(pointers[i] for i in f.intel_evidence_ids) == [
+        "/matches/0/vulnerability/cvss",
+        "/matches/0/vulnerability/epss",
+        "/matches/0/vulnerability/knownExploited",
+    ]
+    assert len(set(pointers)) == len(evidence)
+
+
+def test_missing_intel_stays_unknown_not_safe() -> None:
+    f = parse_grype({"matches": [_match({})]}, "raw/grype.json", SHA)[0][0]
+    assert f.epss is None and f.known_exploited is None and f.cvss_vector is None
+    assert f.intel_evidence_ids == []
+
+
+def test_empty_known_exploited_list_means_not_in_kev() -> None:
+    f = parse_grype({"matches": [_match({"knownExploited": []})]}, "raw/grype.json", SHA)[0][0]
+    assert f.known_exploited is False

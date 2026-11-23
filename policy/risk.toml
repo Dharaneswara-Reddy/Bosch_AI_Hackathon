@@ -1,0 +1,25 @@
+# Guardian risk policy: thresholds and weights for the SSVC risk engine and confidence gate.
+
+# Exploitation is "likely" when EPSS or its percentile reaches these values.
+epss_threshold = 0.1
+epss_percentile_threshold = 0.95
+
+# Share of the 0-100 score driven by EPSS percentile (0 = ignore EPSS).
+epss_weight = 0.3
+
+# Findings below this confidence (0-1) go to a human reviewer.
+review_confidence_threshold = 0.6
+
+# Multiplier on the score by exposure.
+[exposure_factor]
+open = 1.0
+limited = 0.85
+small = 0.6
+
+# Confidence factor weights; normalised over the factors the code can compute.
+[confidence_weights]
+version_confirmed = 0.25
+path_resolved = 0.15
+scanners_agree = 0.15
+exploit_data = 0.15
+reachability_known = 0.15

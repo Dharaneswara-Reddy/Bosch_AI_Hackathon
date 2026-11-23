@@ -75,6 +75,37 @@ class Confidence(StrEnum):
     LOW = "low"
 
 
+class SsvcDecision(StrEnum):
+    ACT = "act"
+    ATTEND = "attend"
+    TRACK_STAR = "track_star"
+    TRACK = "track"
+
+
+class Exploitation(StrEnum):
+    ACTIVE = "active"
+    LIKELY = "likely"
+    NONE = "none"
+    UNKNOWN = "unknown"
+
+
+class Exposure(StrEnum):
+    OPEN = "open"
+    LIMITED = "limited"
+    SMALL = "small"
+
+
+class Automatable(StrEnum):
+    YES = "yes"
+    NO = "no"
+    UNKNOWN = "unknown"
+
+
+class TechnicalImpact(StrEnum):
+    TOTAL = "total"
+    PARTIAL = "partial"
+
+
 class ClaimKind(StrEnum):
     EVIDENCE = "evidence"
     INFERENCE = "inference"
@@ -200,6 +231,23 @@ class Finding(BaseModel):
     image_tag: str | None = None
     risk_note: str | None = None
     relevance: Relevance | None = None
+    cvss_vector: str | None = None
+    cvss_score: float | None = Field(default=None, ge=0, le=10)
+    epss: float | None = Field(default=None, ge=0, le=1)
+    epss_percentile: float | None = Field(default=None, ge=0, le=1)
+    epss_date: str | None = None
+    known_exploited: bool | None = None
+    intel_evidence_ids: list[str] = Field(default_factory=list)
+    ssvc_decision: SsvcDecision | None = None
+    exploitation: Exploitation | None = None
+    exposure: Exposure | None = None
+    automatable: Automatable | None = None
+    technical_impact: TechnicalImpact | None = None
+    risk_score: int | None = Field(default=None, ge=0, le=100)
+    risk_reasons: list[str] = Field(default_factory=list)
+    confidence_score: float | None = Field(default=None, ge=0, le=1)
+    review_required: bool = False
+    review_reasons: list[str] = Field(default_factory=list)
 
 
 class AgentClaim(BaseModel):
