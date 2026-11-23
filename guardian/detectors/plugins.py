@@ -115,6 +115,19 @@ def _git_lockfile(target: Path, commit: str, relative: str) -> dict[str, object]
     return parsed if isinstance(parsed, dict) else {"packages": {}}
 
 
+def _baseline_lockfile(
+    context: DetectorContext, root: Path, relative: str
+) -> dict[str, object] | None:
+    """Prefer the lockfile the baseline scan archived; fall back to git history."""
+    if context.baseline is not None:
+        archived = context.baseline / "raw/detectors/install_script/lockfiles" / relative
+        if archived.is_file():
+            parsed = json.loads(archived.read_text(encoding="utf-8"))
+            return parsed if isinstance(parsed, dict) else None
+    commit = _baseline_commit(context)
+    return _git_lockfile(root, commit, relative) if commit else None
+
+
 def _npm_lockfiles(root: Path) -> list[Path]:
     return sorted(
         path for path in root.rglob("package-lock.json")
@@ -152,11 +165,10 @@ def _run_install_script(context: DetectorContext) -> DetectionResult:
             no_lock_rows.extend(coverage_rows("install_script", [ecosystem], status, reason))
         return DetectionResult(coverage=no_lock_rows)
 
-    baseline_commit = _baseline_commit(context)
     combined = DetectionResult()
     for lockfile in target_lockfiles:
         relative = lockfile.relative_to(root).as_posix()
-        baseline = _git_lockfile(root, baseline_commit, relative) if baseline_commit else None
+        baseline = _baseline_lockfile(context, root, relative)
         partial = install_script.detect(lockfile, baseline_lockfile=baseline, ecosystems=["npm"])
         lock_bytes = lockfile.read_bytes()
         artifact_file = f"raw/detectors/install_script/lockfiles/{relative}"
@@ -209,11 +221,10 @@ def _run_lockfile_integrity(context: DetectorContext) -> DetectionResult:
     lockfiles = _npm_lockfiles(root) if root is not None else []
     if root is None or not lockfiles:
         return lockfile_integrity.detect(None, baseline_lockfile=None, ecosystems=ecosystems)
-    baseline_commit = _baseline_commit(context)
     combined = DetectionResult()
     for lockfile in lockfiles:
         relative = lockfile.relative_to(root).as_posix()
-        baseline = _git_lockfile(root, baseline_commit, relative) if baseline_commit else None
+        baseline = _baseline_lockfile(context, root, relative)
         partial = lockfile_integrity.detect(
             lockfile, baseline_lockfile=baseline, ecosystems=["npm"]
         )

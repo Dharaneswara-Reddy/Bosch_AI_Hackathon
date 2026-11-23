@@ -4,11 +4,13 @@ import json
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from guardian import runner
 from guardian.detectors import DETECTORS
 from guardian.detectors.lockfile_integrity import detect
+from guardian.evidence import EvidenceStore
 from guardian.models import Component, GraphArtifact
 
 REGISTRY = "https://registry.npmjs.org"
@@ -126,3 +128,26 @@ def test_scan_with_baseline_flags_tampered_lodash_integrity(monkeypatch, tmp_pat
     flagged = [f for f in result.findings if f.anomaly_type == "integrity_change"]
     assert [f.purl for f in flagged] == ["pkg:npm/lodash@4.17.4"]
     assert (flagged[0].risk_rule_id, flagged[0].risk_level) == ("R-AN-1", "high")
+
+
+def test_plugin_reads_baseline_lockfile_from_baseline_scan_artifacts(tmp_path: Path) -> None:
+    target = tmp_path / "target"
+    target.mkdir()
+    (target / "package-lock.json").write_text(
+        json.dumps(_lock(lodash=_entry(integrity="sha512-TAMPERED"))), encoding="utf-8"
+    )
+    baseline = tmp_path / "baseline"
+    saved = baseline / "raw/detectors/install_script/lockfiles/package-lock.json"
+    saved.parent.mkdir(parents=True)
+    saved.write_text(json.dumps(_lock(lodash=_entry(integrity="sha512-AAA"))), encoding="utf-8")
+    out = tmp_path / "out"
+    (out / "raw").mkdir(parents=True)
+    context = SimpleNamespace(
+        target_path=target, sbom=out / "sbom.cdx.json", baseline=baseline, out=out,
+        result=SimpleNamespace(graph=GraphArtifact()), evidence=EvidenceStore(out),
+    )
+    plugin = next(item for item in DETECTORS["npm"] if item.name == "lockfile_integrity")
+
+    result = plugin.run(context)
+
+    assert [f.anomaly_type for f in result.findings] == ["integrity_change"]
