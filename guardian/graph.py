@@ -10,6 +10,7 @@ import networkx as nx
 LOCATION_PROPERTY = "syft:location:0:path"
 DEFAULT_PATH_CAP = 10_000
 COUNTS_KEY = "_path_counts"
+RESOLVER_EDGE_PREFIX = "guardian:resolver-edge:"
 
 
 def load_graph(sbom: Path) -> nx.DiGraph:
@@ -26,12 +27,23 @@ def load_graph(sbom: Path) -> nx.DiGraph:
             label=f"{name}@{version}" if version else name,
         )
         locations[ref] = _location(component)
+    resolver_edges = _resolver_edges(bom)
     for entry in bom.get("dependencies", []):
         for child in entry.get("dependsOn", []):
             if entry["ref"] in graph and child in graph:
-                graph.add_edge(entry["ref"], child, edge_source="sbom")
+                source = "resolver" if (entry["ref"], child) in resolver_edges else "sbom"
+                graph.add_edge(entry["ref"], child, edge_source=source)
     graph.graph["roots"] = _roots(graph, locations)
     return graph
+
+
+def _resolver_edges(bom: dict[str, Any]) -> set[tuple[str, str]]:
+    edges: set[tuple[str, str]] = set()
+    for prop in bom.get("properties", []):
+        if str(prop.get("name", "")).startswith(RESOLVER_EDGE_PREFIX):
+            parent, child = str(prop["value"]).split(" ", 1)
+            edges.add((parent, child))
+    return edges
 
 
 def _location(component: dict[str, Any]) -> str:
