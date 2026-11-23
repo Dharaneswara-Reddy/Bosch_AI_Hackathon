@@ -85,12 +85,15 @@ def _parse_match(
 def parse_grype(
     raw: dict[str, Any], raw_file: str, raw_sha256: str
 ) -> tuple[list[Finding], list[Evidence]]:
-    tool_version = str(raw.get("descriptor", {}).get("version", UNKNOWN))
+    descriptor = raw.get("descriptor", {})
+    tool_version = str(descriptor.get("version", UNKNOWN))
+    db_built_at = str(descriptor.get("db", {}).get("status", {}).get("built", UNKNOWN))
     pairs = [
         _parse_match(m, i, tool_version, raw_file, raw_sha256)
         for i, m in enumerate(raw.get("matches", []))
     ]
-    return [f for f, _ in pairs], [e for _, e in pairs]
+    evidence = [e.model_copy(update={"db_built_at": db_built_at}) for _, e in pairs]
+    return [f for f, _ in pairs], evidence
 
 
 def run_grype(

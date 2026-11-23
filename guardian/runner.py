@@ -187,6 +187,22 @@ def _inventory(context: ScanContext) -> None:
     context.result.graph = _normalize_graph(graph_path, context.sbom, context.graph)
 
 
+def _database_date(context: ScanContext, name: str, evidence: list[Evidence]) -> str:
+    reported = {record.db_built_at for record in evidence} - {UNKNOWN}
+    configured = context.result.scan.db_built_at.get(name, UNKNOWN)
+    if len(reported) == 1:
+        date = reported.pop()
+    elif configured != UNKNOWN:
+        date = configured
+    elif name == "osv":
+        # OSV-Scanner has no local database; it queries api.osv.dev during the scan.
+        date = f"live api.osv.dev at {datetime.now(UTC).isoformat(timespec='seconds')}"
+    else:
+        date = UNKNOWN
+    context.result.scan.db_built_at[name] = date
+    return date
+
+
 def _scan_advisories(context: ScanContext, name: str) -> list[Finding]:
     scanner = _module(f"guardian.scanners.{name}")
     image = context.settings.tool_images.get(name)
@@ -205,7 +221,7 @@ def _scan_advisories(context: ScanContext, name: str) -> list[Finding]:
         findings, records = parse(raw, relative, checksum, tool_version)
     context.result.scan.scanner_versions[name] = image
     evidence = TypeAdapter(list[Evidence]).validate_python(records)
-    database_date = context.result.scan.db_built_at.get(name, UNKNOWN)
+    database_date = _database_date(context, name, evidence)
     context.evidence.record_many(
         record.model_copy(update={"db_built_at": database_date}) for record in evidence
     )
