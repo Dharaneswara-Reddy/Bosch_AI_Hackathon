@@ -102,3 +102,33 @@ def _write_sbom_refs(tmp_path: Path, edges: dict[str, list[str]], refs: list[str
     ]
     path.write_text(json.dumps(bom), encoding="utf-8")
     return path
+
+
+def test_resolver_edges_and_synthetic_roots_give_paths(tmp_path: Path) -> None:
+    bom = {
+        "components": [
+            {"bom-ref": ref, "name": ref, "version": "1", "purl": f"pkg:gem/{ref}@1",
+             "properties": [{"name": "syft:location:0:path", "value": "/Gemfile.lock"}]}
+            for ref in ("a", "b", "c", "d")
+        ] + [
+            {"bom-ref": "guardian:root:Gemfile.lock", "type": "application",
+             "name": "Gemfile.lock",
+             "properties": [{"name": "syft:location:0:path", "value": "/Gemfile.lock"}]},
+        ],
+        "dependencies": [
+            {"ref": "guardian:root:Gemfile.lock", "dependsOn": ["a", "d"]},
+            {"ref": "a", "dependsOn": ["b"]}, {"ref": "b", "dependsOn": ["c"]},
+        ],
+        "properties": [{"name": "guardian:resolver-edge:0", "value": "b c"},
+                       {"name": "guardian:resolver-edge:1",
+                        "value": "guardian:root:Gemfile.lock a"}],
+    }
+    path = tmp_path / "sbom.cdx.json"
+    path.write_text(json.dumps(bom), encoding="utf-8")
+    graph = load_graph(path)
+    assert graph.graph["roots"] == ["guardian:root:Gemfile.lock"]
+    assert shortest_path(graph, "c") == ["guardian:root:Gemfile.lock", "a", "b", "c"]
+    assert shortest_path(graph, "d") == ["guardian:root:Gemfile.lock", "d"]
+    assert graph.edges["b", "c"]["edge_source"] == "resolver"
+    assert graph.edges["a", "b"]["edge_source"] == "sbom"
+    assert graph.edges["guardian:root:Gemfile.lock", "d"]["edge_source"] == "sbom"

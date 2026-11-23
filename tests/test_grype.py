@@ -84,6 +84,17 @@ def test_missing_descriptor_version_is_unknown(raw: dict[str, Any]) -> None:
     assert parse_grype(raw, "r", SHA)[1][0].tool_version == UNKNOWN
 
 
+def test_evidence_records_grype_db_build_date(raw: dict[str, Any]) -> None:
+    _, evidence = parse_grype(raw, "raw/grype.json", "f" * 64)
+    assert {e.db_built_at for e in evidence} == {"2026-11-23T06:28:32Z"}
+
+
+def test_missing_db_build_date_is_unknown(raw: dict[str, Any]) -> None:
+    raw["descriptor"].pop("db")
+    _, evidence = parse_grype(raw, "raw/grype.json", "f" * 64)
+    assert {e.db_built_at for e in evidence} == {UNKNOWN}
+
+
 def test_empty_matches_yield_empty_lists() -> None:
     assert parse_grype({"matches": []}, "r", SHA) == ([], [])
 

@@ -10,7 +10,19 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
-from guardian.models import UNKNOWN, CoverageRow, Evidence, Finding, finding_id
+from guardian.models import (
+    UNKNOWN,
+    Confidence,
+    CoverageRow,
+    CoverageStatus,
+    Evidence,
+    Finding,
+    FindingKind,
+    FindingState,
+    MatchBasis,
+    RiskLevel,
+    finding_id,
+)
 
 JsonObject = dict[str, Any]
 
@@ -98,7 +110,7 @@ def ecosystem_list(components: Iterable[Any], supplied: Iterable[str] | None = N
 def coverage_rows(
     detector: str,
     ecosystems: Iterable[str],
-    status: str,
+    status: CoverageStatus,
     reason: str = "",
     components_seen: dict[str, int] | None = None,
 ) -> list[CoverageRow]:
@@ -148,13 +160,15 @@ def finding_payload(
     component: Any,
     anomaly_type: str,
     evidence_ids: Iterable[str],
+    *,
+    image_tag: str | None = None,
     **details: Any,
 ) -> tuple[Finding, JsonObject]:
     purl = purl_of(component) if component is not None else UNKNOWN
     component_id = read_value(component, "component_id") or read_value(component, "bom-ref") or purl
     finding = Finding(
         finding_id=finding_id(detector, purl, anomaly_type, []),
-        kind="anomaly",
+        kind=FindingKind.ANOMALY,
         component_id=str(component_id),
         purl=purl,
         advisory_id=None,
@@ -163,14 +177,15 @@ def finding_payload(
         confirmed_by=[],
         source_severity=UNKNOWN,
         fixed_versions=[],
-        match_basis="purl",
+        match_basis=MatchBasis.PURL,
         dependency_path=[],
         path_count=None,
         evidence_ids=list(evidence_ids),
-        state="under_investigation",
-        risk_level="unknown",
+        state=FindingState.UNDER_INVESTIGATION,
+        risk_level=RiskLevel.UNKNOWN,
         risk_rule_id=None,
-        confidence="low",
+        confidence=Confidence.LOW,
+        image_tag=image_tag,
     )
     return finding, details
 

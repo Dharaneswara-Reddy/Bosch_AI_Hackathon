@@ -32,6 +32,7 @@ from guardian.models import AgentClaim, ClaimKind, Finding, LlmStatus
 DEFAULT_TIMEOUT_S = 30.0
 DEFAULT_TOP_N = 20
 TOP_FINDING_PLACEHOLDER = "@top-finding"
+CLAIM_FIELDS = ("text", "evidence_ids", "kind", "uncertainty")
 _EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="guardian-llm")
 
 
@@ -219,6 +220,8 @@ def load_injected_claims(path: Path, ctx: ReviewContext) -> list[AgentClaim]:
     ``@top-finding`` cites the top finding's first evidence ID.
     """
     data = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(data, dict) and "claims" not in data:
+        data = {"claims": [{k: data[k] for k in CLAIM_FIELDS if k in data}]}
     reply = LLMReply.model_validate(data if isinstance(data, dict) else {"claims": data})
     top = ctx.top_findings(1)
     top_evidence = top[0].evidence_ids[0] if top and top[0].evidence_ids else "UNKNOWN"

@@ -1,11 +1,12 @@
 import json
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from types import ModuleType
 
-from guardian import runner
+from guardian import cli, runner
 from guardian.cli import main
-from guardian.models import Component, Finding, GraphArtifact
+from guardian.models import Component, Finding, GraphArtifact, RunResult, Scan
 
 
 def _inventory(context):
@@ -123,6 +124,10 @@ def test_p2_parsers_merge_real_fixture_findings(monkeypatch, tmp_path):
     assert evidence_ids
     assert all(set(finding.evidence_ids) <= evidence_ids for finding in result.findings)
     assert {"grype", "osv"} == set(result.scan.scanner_versions)
+    assert result.scan.db_built_at["grype"] == "2026-11-23T06:28:32Z"
+    grype_evidence = [e for e in result.evidence if e.tool == "grype"]
+    assert grype_evidence and {e.db_built_at for e in grype_evidence} == {"2026-11-23T06:28:32Z"}
+    assert result.scan.db_built_at["osv"].startswith("live api.osv.dev")
     assert (output / "report.html").is_file()
 
 def test_cache_reuses_clean_checkout_and_invalidates_changed_lockfile(monkeypatch, tmp_path):
@@ -183,3 +188,55 @@ def test_paths_preserve_exact_bom_ids_and_skip_ambiguous_purls(monkeypatch, tmp_
     assert exact.path_count == 1
     assert ambiguous.component_id == "unknown" and ambiguous.dependency_path == []
     assert unreachable.dependency_path == [] and unreachable.path_count is None
+
+
+def test_inject_claim_file_is_rejected_without_failing_ai(monkeypatch, tmp_path):
+    target = tmp_path / "target"
+    target.mkdir()
+    fixture = Path(__file__).parent / "fixtures" / "fake_cve_claim.json"
+
+    def detect(context):
+        raw = context.out / "raw"
+        raw.mkdir(exist_ok=True)
+        (raw / "g.json").write_text("{}", encoding="utf-8")
+        evidence_id = context.evidence.add("grype", "raw/g.json", "/matches/0")
+        context.result.findings = [Finding(
+            finding_id="f1", kind="vulnerability", component_id="lib", purl="pkg:npm/lib@1",
+            advisory_id="CVE-2000-1234", source_severity="high", evidence_ids=[evidence_id],
+        )]
+
+    monkeypatch.setattr(runner, "_inventory", _inventory)
+    monkeypatch.setattr(runner, "_scanners", lambda context: None)
+    monkeypatch.setattr(runner, "_detectors", detect)
+    monkeypatch.setattr(runner, "_render", lambda directory: None)
+    result = runner.scan(target, tmp_path / "scan", use_llm=False, inject_claim=fixture)
+    assert result.scan.errors == {}
+    assert result.scan.status == "complete"
+    assert result.scan.llm_status == "unavailable"
+    assert [c.validated for c in result.claims] == [False, False]
+    assert "CVE-2026-31337" in (result.claims[0].rejected_reason or "")
+    assert "evidence ID not found" in (result.claims[1].rejected_reason or "")
+
+
+def test_eval_command_runs_scan_and_reports(monkeypatch, tmp_path, capsys):
+    base = tmp_path / "base"
+    base.mkdir()
+    scenarios = tmp_path / "scenarios"
+    scenarios.mkdir()
+    calls = []
+
+    def fake_scan(target, out, baseline=None, use_llm=True, **kwargs):
+        calls.append((Path(target), use_llm))
+        return RunResult(scan=Scan(scan_id="s", target=str(target), started_at=datetime.now(UTC)))
+
+    monkeypatch.setattr(cli, "scan", fake_scan)
+    assert main(["eval", str(scenarios), "--base", str(base)]) == 0
+    assert "Scenario results:" in capsys.readouterr().out
+    assert calls == [(base, False)]
+
+
+def test_eval_command_reports_bad_scenarios_without_traceback(tmp_path, capsys):
+    scenarios = tmp_path / "scenarios"
+    scenarios.mkdir()
+    assert main(["eval", str(scenarios), "--base", str(tmp_path / "missing")]) == 1
+    assert "guardian:" in capsys.readouterr().err
