@@ -21,11 +21,12 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 
+from guardian.ai.review import load_injected, run_review
 from guardian.config import Settings
 from guardian.coverage import build_coverage
 from guardian.evidence import EvidenceStore, file_sha256
 from guardian.models import (
-    UNKNOWN, AgentClaim, Component, CoverageArtifact, CoverageRow, CoverageStatus, Edge,
+    UNKNOWN, Component, CoverageArtifact, CoverageRow, CoverageStatus, Edge,
     Evidence, Finding, FindingsArtifact, GraphArtifact, LlmStatus, Resolution, RunResult,
     Scan, ScanStatus, Scope,
 )
@@ -289,17 +290,11 @@ def _classify(context: ScanContext) -> None:
 
 
 def _review(context: ScanContext) -> None:
-    if context.inject_claim is not None:
-        claim = AgentClaim.model_validate_json(_read(context.inject_claim)).model_copy(
-            update={"validated": False, "rejected_reason": None},
-        )
-        reviewed = _module("guardian.ai.validator").validate(claim, context.result)
-        context.result.claims.append(AgentClaim.model_validate(reviewed))
-    if context.settings.provider == "none":
-        return
-    claims, status = _module("guardian.ai.steps").run_ai_review(context.result)
-    context.result.claims.extend(TypeAdapter(list[AgentClaim]).validate_python(claims))
-    context.result.scan.llm_status = LlmStatus(status)
+    result = context.result
+    injected = load_injected(context.inject_claim, result) if context.inject_claim else []
+    claims, status = run_review(result, context.settings, injected)
+    result.claims.extend(claims)
+    result.scan.llm_status = status
 
 
 def _render(run_dir: Path) -> None:
