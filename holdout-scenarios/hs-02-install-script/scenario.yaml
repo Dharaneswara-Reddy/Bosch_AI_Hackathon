@@ -1,0 +1,4 @@
+description: >-
+  A new dependency with a postinstall script (core-js 3.51.0, no dependencies) is added. Install scripts never run during the scan.
+base: juice-shop@c9f99228d9d56afb5f5ca7925376292f7fa44b13
+author: P4

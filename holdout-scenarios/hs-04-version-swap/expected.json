@@ -1,0 +1,7 @@
+[
+  {
+    "kind": "anomaly",
+    "anomaly_type": "dependency_update",
+    "purl": "pkg:npm/z85"
+  }
+]

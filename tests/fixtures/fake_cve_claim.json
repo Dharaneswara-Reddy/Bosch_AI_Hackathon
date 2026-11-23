@@ -1,0 +1,14 @@
+{
+  "claims": [
+    {
+      "text": "jsonwebtoken 0.4.0 is also affected by CVE-2026-31337, a remote code execution flaw with critical risk.",
+      "evidence_ids": ["@top-finding"],
+      "kind": "evidence"
+    },
+    {
+      "text": "The vulnerable code path was confirmed in routes/login.ts via advisory CVE-2026-31338.",
+      "evidence_ids": ["ev-fabricated-0001"],
+      "kind": "evidence"
+    }
+  ]
+}

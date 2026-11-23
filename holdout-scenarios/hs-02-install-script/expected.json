@@ -1,0 +1,12 @@
+[
+  {
+    "kind": "anomaly",
+    "anomaly_type": "unexpected_dependency",
+    "purl": "pkg:npm/core-js"
+  },
+  {
+    "kind": "anomaly",
+    "anomaly_type": "install_script_change",
+    "purl": "pkg:npm/core-js"
+  }
+]

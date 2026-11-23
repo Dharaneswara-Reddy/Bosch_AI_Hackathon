@@ -1,0 +1,7 @@
+[
+  {
+    "kind": "anomaly",
+    "anomaly_type": "unpinned_ci_action",
+    "purl": "pkg:github/aquasecurity/trivy-action"
+  }
+]

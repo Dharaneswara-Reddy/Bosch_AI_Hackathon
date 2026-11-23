@@ -1,0 +1,4 @@
+description: >-
+  The pinned version of an existing dependency silently changes (z85 ^0.0.2 -> 0.0.1, no dependencies), so the resolved lockfile version swaps.
+base: juice-shop@c9f99228d9d56afb5f5ca7925376292f7fa44b13
+author: P4
