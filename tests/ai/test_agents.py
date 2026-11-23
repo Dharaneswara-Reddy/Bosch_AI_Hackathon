@@ -193,7 +193,8 @@ def test_remediation_proposals_are_checked_against_code_computed_options() -> No
     assert good.validated and good.requires_human_approval and good.action == FixAction.UPGRADE
     assert not invented.validated
     assert "not a scanner-reported fix" in (invented.rejected_reason or "")
-    assert removal.validated
+    assert not removal.validated
+    assert "no remediation candidate" in (removal.rejected_reason or "")
     fix_claims = [c for c in result.claims if c.step == "remediation_planner"]
     assert len(fix_claims) == 3
     assert all("Requires human approval" in c.text for c in fix_claims)

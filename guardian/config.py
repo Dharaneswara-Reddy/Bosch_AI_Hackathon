@@ -9,6 +9,8 @@ from pydantic import BaseModel, Field, SecretStr, model_validator
 AI_MIN_RISK = "medium"
 AI_MAX_GROUPS = 200
 AI_CONCURRENCY = 4
+AI_PLANNER_MAX = 10
+AI_PLANNER_TIMEOUT_S = 60.0
 TOOL_TIMEOUT_S = 180
 IMAGE_DIGEST = re.compile(r"[^\s@]+@sha256:[a-f0-9]{64}")
 

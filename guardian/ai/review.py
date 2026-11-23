@@ -19,7 +19,14 @@ from guardian.ai.llm import (
     read_env_file,
     with_fallbacks,
 )
-from guardian.config import AI_CONCURRENCY, AI_MAX_GROUPS, AI_MIN_RISK, Settings
+from guardian.config import (
+    AI_CONCURRENCY,
+    AI_MAX_GROUPS,
+    AI_MIN_RISK,
+    AI_PLANNER_MAX,
+    AI_PLANNER_TIMEOUT_S,
+    Settings,
+)
 from guardian.models import AgentClaim, RunResult
 
 
@@ -57,6 +64,17 @@ def _positive_int(env: Mapping[str, str], name: str, default: int) -> int:
     return value
 
 
+def _positive_float(env: Mapping[str, str], name: str, default: float) -> float:
+    raw = env.get(name, "").strip()
+    try:
+        value = float(raw) if raw else default
+    except ValueError:
+        value = 0.0
+    if value <= 0:
+        raise ValueError(f"{name} must be a number of seconds above 0, not '{raw}'.")
+    return value
+
+
 def review_options(env: Mapping[str, str]) -> dict[str, Any]:
     """Policy and concurrency settings for one review; a bad value fails at startup."""
     min_risk = env.get("GUARDIAN_AI_MIN_RISK", "").strip().lower() or AI_MIN_RISK
@@ -69,6 +87,10 @@ def review_options(env: Mapping[str, str]) -> dict[str, Any]:
         "max_groups": _positive_int(env, "GUARDIAN_AI_MAX_GROUPS", AI_MAX_GROUPS),
         "pack_batch": _positive_int(env, "GUARDIAN_LLM_PACK_BATCH", PACK_BATCH),
         "concurrency": _positive_int(env, "GUARDIAN_LLM_CONCURRENCY", AI_CONCURRENCY),
+        "planner_timeout": _positive_float(
+            env, "GUARDIAN_LLM_PLANNER_TIMEOUT", AI_PLANNER_TIMEOUT_S
+        ),
+        "planner_max": _positive_int(env, "GUARDIAN_AI_PLANNER_MAX", AI_PLANNER_MAX),
     }
 
 

@@ -79,6 +79,8 @@ def test_review_options_default_to_the_documented_policy() -> None:
         "max_groups": 200,
         "pack_batch": 5,
         "concurrency": 4,
+        "planner_timeout": 60.0,
+        "planner_max": 10,
     }
 
 
@@ -90,12 +92,16 @@ def test_review_options_read_the_environment() -> None:
         "GUARDIAN_AI_MAX_GROUPS": "50",
         "GUARDIAN_LLM_PACK_BATCH": "3",
         "GUARDIAN_LLM_CONCURRENCY": "2",
+        "GUARDIAN_LLM_PLANNER_TIMEOUT": "90.5",
+        "GUARDIAN_AI_PLANNER_MAX": "4",
     }
     assert review_options(env) == {
         "min_risk": "high",
         "max_groups": 50,
         "pack_batch": 3,
         "concurrency": 2,
+        "planner_timeout": 90.5,
+        "planner_max": 4,
     }
 
 
@@ -106,6 +112,8 @@ def test_review_options_read_the_environment() -> None:
         ("GUARDIAN_AI_MAX_GROUPS", "0"),
         ("GUARDIAN_LLM_CONCURRENCY", "0"),
         ("GUARDIAN_LLM_PACK_BATCH", "many"),
+        ("GUARDIAN_LLM_PLANNER_TIMEOUT", "soon"),
+        ("GUARDIAN_AI_PLANNER_MAX", "0"),
     ],
 )
 def test_review_options_reject_bad_values_naming_the_variable(name: str, value: str) -> None:
