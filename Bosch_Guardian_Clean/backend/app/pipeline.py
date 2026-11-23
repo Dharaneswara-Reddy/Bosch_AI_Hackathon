@@ -4,9 +4,11 @@ import hashlib
 import json
 import os
 import shutil
+import threading
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Final
+from typing import Final, TypeVar
 from uuid import uuid4
 
 from guardian import runner
@@ -34,6 +36,9 @@ DEMO_APP: Final = REPO_ROOT / "demo" / "vulnerable-app"
 DEMO_LABEL: Final = "Built-in demo app (demo/vulnerable-app, local, no network)"
 CHANGES_FILE: Final = "changes.json"
 DEMO_FILES: Final = frozenset({"package.json", "package-lock.json", "ci.yml"})
+BASELINE_CACHE: Final = "baseline-cache"
+DEFAULT_BASELINE_TIMEOUT: Final = 600.0
+T = TypeVar("T")
 
 
 def load_root_env(path: Path = REPO_ROOT / ".env") -> None:
@@ -109,6 +114,56 @@ def _fetch_and_prepare(record: ScanRecord, repo_dir: Path, token: str | None) ->
     return True
 
 
+def _baseline_timeout() -> float:
+    try:
+        return float(os.environ.get("GUARDIAN_BASELINE_TIMEOUT", DEFAULT_BASELINE_TIMEOUT))
+    except ValueError:
+        return DEFAULT_BASELINE_TIMEOUT
+
+
+def _with_timeout(work: Callable[[], T], seconds: float) -> T:
+    """Run ``work`` in a daemon thread; a stuck scanner cannot be killed, only abandoned."""
+    outcome: list[T] = []
+    failure: list[BaseException] = []
+
+    def target() -> None:
+        try:
+            outcome.append(work())
+        except BaseException as error:  # noqa: BLE001 - re-raised in the caller's thread
+            failure.append(error)
+
+    thread = threading.Thread(target=target, daemon=True)
+    thread.start()
+    thread.join(seconds)
+    if thread.is_alive():
+        raise TimeoutError(f"Baseline scan timed out after {seconds:g}s")
+    if failure:
+        raise failure[0]
+    return outcome[0]
+
+
+def _cache_dir(record: ScanRecord, commit_sha: str) -> Path:
+    key = hashlib.sha256(record.repository_url.lower().encode("utf-8")).hexdigest()[:16]
+    return record.work_dir.parent / BASELINE_CACHE / f"{key}-{commit_sha}"
+
+
+def _baseline_out(record: ScanRecord, base_dir: Path, commit_sha: str) -> Path:
+    """Return the baseline scan output, reusing a cached scan of the same commit."""
+    out, cached = base_dir / "out", _cache_dir(record, commit_sha)
+    if (cached / "run.json").is_file():
+        shutil.copytree(cached, out)
+        return out
+    runner.scan(base_dir / "repo", out, use_llm=False)
+    staging = cached.with_name(f"{cached.name}.{uuid4().hex}.tmp")
+    cached.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(out, staging)
+    if cached.exists():
+        shutil.rmtree(staging)
+    else:
+        staging.replace(cached)
+    return out
+
+
 def _scan_baseline(record: ScanRecord, token: str | None) -> tuple[Path, str] | None:
     record.stage = "baseline"
     base_dir = record.work_dir / "baseline"
@@ -117,11 +172,13 @@ def _scan_baseline(record: ScanRecord, token: str | None) -> tuple[Path, str] | 
                                    base_dir / "repo", token)
         if not generate_npm_lockfiles(fetched).files:
             raise FetchError(f"No dependency manifests found at baseline '{record.baseline_ref}'")
-        runner.scan(base_dir / "repo", base_dir / "out", use_llm=False)
+        out = _with_timeout(
+            lambda: _baseline_out(record, base_dir, fetched.commit_sha), _baseline_timeout(),
+        )
     except Exception as error:  # noqa: BLE001 - the main scan stays useful without a baseline
         record.errors["baseline"] = f"{type(error).__name__}: {error}"
         return None
-    return base_dir / "out", fetched.commit_sha
+    return out, fetched.commit_sha
 
 
 def _read_artifacts(out: Path) -> tuple[GraphArtifact, FindingsArtifact]:
