@@ -40,3 +40,7 @@ select = ["E", "F", "I", "B", "UP"]
 [tool.mypy]
 strict = true
 python_version = "3.11"
+
+[[tool.mypy.overrides]]
+module = "networkx.*"
+ignore_missing_imports = true
