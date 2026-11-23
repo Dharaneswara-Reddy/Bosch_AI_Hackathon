@@ -9,13 +9,14 @@ from guardian.detectors._common import (
     DetectionResult,
     components_from,
     coverage_rows,
-    ecosystem_of,
     ecosystem_list,
+    ecosystem_of,
     evidence_record,
     finding_payload,
-    json_sha256,
+    json_bytes,
     read_value,
 )
+from guardian.models import CoverageRow
 
 THRESHOLD = 2
 _DATA_ROOT = Path(__file__).resolve().parents[2] / "data"
@@ -81,50 +82,66 @@ def detect(
     components = components_from(sbom)
     ecosystems = ecosystem_list(components)
     npm_components = [item for item in components if ecosystem_of(item) == "npm"]
-    counts = {ecosystem: sum(ecosystem_of(item) == ecosystem for item in components) for ecosystem in ecosystems}
+    counts = {
+        ecosystem: sum(ecosystem_of(item) == ecosystem for item in components)
+        for ecosystem in ecosystems
+    }
     popular_file = popular_path or _DATA_ROOT / "popular" / "npm.txt"
     allowlist_file = allowlist_path or _DATA_ROOT / "allowlist" / "npm.txt"
     popular = _load_names(popular_file)
     allowlisted = _load_names(allowlist_file)
-    findings: list[dict[str, Any]] = []
-    evidence: list[dict[str, Any]] = []
+    findings = []
+    evidence = []
+    finding_details: dict[str, dict[str, Any]] = {}
     for index, component in enumerate(npm_components):
         if read_value(component, "scope") != "direct":
             continue
         name = str(read_value(component, "name", ""))
         normalized = name.casefold()
         candidate = _comparison_name(name).casefold()
-        if not name or normalized in allowlisted or candidate in allowlisted or candidate in popular:
+        is_allowed = normalized in allowlisted or candidate in allowlisted
+        if not name or is_allowed or candidate in popular:
             continue
-        choices = sorted((damerau_levenshtein(candidate, popular_name), popular_name) for popular_name in popular)
+        choices = sorted(
+            (damerau_levenshtein(candidate, popular_name), popular_name)
+            for popular_name in popular
+        )
         if not choices:
             continue
         distance, nearest = choices[0]
         if distance == 0 or distance > THRESHOLD:
             continue
-        component_digest = json_sha256(component).encode("ascii")
         record = evidence_record(
             "typosquat",
             "sbom.cdx.json",
             f"/components/{index}",
-            component_digest,
-            component_purl=read_value(component, "purl", "UNKNOWN"),
+            json_bytes(sbom),
         )
         evidence.append(record)
-        findings.append(
-            finding_payload(
-                "typosquat",
-                component,
-                "suspected_typosquat",
-                [record["evidence_id"]],
-                nearest_popular_name=nearest,
-                distance=distance,
-                threshold=THRESHOLD,
-                package_name=name,
-            )
+        finding, details = finding_payload(
+            "typosquat",
+            component,
+            "suspected_typosquat",
+            [record.evidence_id],
+            nearest_popular_name=nearest,
+            distance=distance,
+            threshold=THRESHOLD,
+            package_name=name,
         )
-    result: list[dict[str, Any]] = []
+        findings.append(finding)
+        finding_details[finding.finding_id] = details
+    result: list[CoverageRow] = []
     for ecosystem in ecosystems:
-        status = "finding" if ecosystem == "npm" and findings else ("pass" if ecosystem == "npm" else "not_covered")
-        result.extend(coverage_rows("typosquat", [ecosystem], status, "" if ecosystem == "npm" else "Only npm names are configured", counts))
-    return DetectionResult(findings=findings, evidence=evidence, coverage=result)
+        if ecosystem == "npm":
+            status = "finding" if findings else "pass"
+            reason = ""
+        else:
+            status = "not_covered"
+            reason = "Only npm names are configured"
+        result.extend(coverage_rows("typosquat", [ecosystem], status, reason, counts))
+    return DetectionResult(
+        findings=findings,
+        evidence=evidence,
+        coverage=result,
+        finding_details=finding_details,
+    )

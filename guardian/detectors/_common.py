@@ -1,21 +1,17 @@
-"""Shared, serializable output helpers for anomaly detectors.
-
-The P5-owned ``guardian.models`` contract is not present on this branch yet.
-Detector payloads intentionally use the contract's field names so the runner
-can validate them with the shared Pydantic models at the stage boundary.
-"""
+"""Shared output helpers using the P5-owned Pydantic data contract."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
 import hashlib
 import json
+from collections.abc import Iterable
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
+from guardian.models import UNKNOWN, CoverageRow, Evidence, Finding, finding_id
 
-UNKNOWN = "UNKNOWN"
 JsonObject = dict[str, Any]
 
 
@@ -23,9 +19,11 @@ JsonObject = dict[str, Any]
 class DetectionResult:
     """Findings, evidence drafts and coverage emitted by one detector."""
 
-    findings: list[JsonObject] = field(default_factory=list)
-    evidence: list[JsonObject] = field(default_factory=list)
-    coverage: list[JsonObject] = field(default_factory=list)
+    findings: list[Finding] = field(default_factory=list)
+    evidence: list[Evidence] = field(default_factory=list)
+    coverage: list[CoverageRow] = field(default_factory=list)
+    finding_details: dict[str, JsonObject] = field(default_factory=dict)
+    artifacts: dict[str, bytes] = field(default_factory=dict)
 
 
 def read_value(value: Any, key: str, default: Any = None) -> Any:
@@ -87,16 +85,16 @@ def coverage_rows(
     status: str,
     reason: str = "",
     components_seen: dict[str, int] | None = None,
-) -> list[JsonObject]:
+) -> list[CoverageRow]:
     counts = components_seen or {}
     return [
-        {
-            "detector": detector,
-            "ecosystem": ecosystem,
-            "status": status,
-            "reason": reason,
-            "components_seen": counts.get(ecosystem, 0),
-        }
+        CoverageRow(
+            detector=detector,
+            ecosystem=ecosystem,
+            status=status,
+            reason=reason,
+            components_seen=counts.get(ecosystem, 0),
+        )
         for ecosystem in ecosystems
     ]
 
@@ -105,8 +103,8 @@ def sha256_bytes(content: bytes) -> str:
     return hashlib.sha256(content).hexdigest()
 
 
-def json_sha256(value: Any) -> str:
-    return sha256_bytes(json.dumps(value, sort_keys=True, default=str).encode("utf-8"))
+def json_bytes(value: Any) -> bytes:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
 
 
 def evidence_record(
@@ -114,21 +112,19 @@ def evidence_record(
     file: str,
     pointer: str,
     content: bytes,
-    **details: Any,
-) -> JsonObject:
-    record: JsonObject = {
-        "evidence_id": hashlib.sha256(
-            f"{detector}\0{file}\0{pointer}\0{sha256_bytes(content)}".encode("utf-8")
-        ).hexdigest()[:24],
-        "tool": f"guardian:{detector}",
-        "tool_version": "1",
-        "file": file,
-        "pointer": pointer,
-        "sha256": sha256_bytes(content),
-        "collected_at": datetime.now(timezone.utc).isoformat(),
-    }
-    record.update(details)
-    return record
+) -> Evidence:
+    evidence_id = hashlib.sha256(
+        f"{detector}\0{file}\0{pointer}\0{sha256_bytes(content)}".encode()
+    ).hexdigest()[:24]
+    return Evidence(
+        evidence_id=evidence_id,
+        tool=f"guardian:{detector}",
+        tool_version="1",
+        file=file,
+        pointer=pointer,
+        sha256=sha256_bytes(content),
+        collected_at=datetime.now(UTC),
+    )
 
 
 def finding_payload(
@@ -137,31 +133,30 @@ def finding_payload(
     anomaly_type: str,
     evidence_ids: Iterable[str],
     **details: Any,
-) -> JsonObject:
+) -> tuple[Finding, JsonObject]:
     purl = purl_of(component) if component is not None else UNKNOWN
     component_id = read_value(component, "component_id") or read_value(component, "bom-ref") or purl
-    identity = json.dumps([detector, purl, anomaly_type, []], separators=(",", ":"))
-    finding: JsonObject = {
-        "finding_id": hashlib.sha256(identity.encode("utf-8")).hexdigest(),
-        "kind": "anomaly",
-        "component_id": component_id,
-        "advisory_id": UNKNOWN,
-        "aliases": [],
-        "anomaly_type": anomaly_type,
-        "confirmed_by": [],
-        "source_severity": UNKNOWN,
-        "fixed_versions": [],
-        "match_basis": "purl",
-        "dependency_path": [],
-        "path_count": UNKNOWN,
-        "evidence_ids": list(evidence_ids),
-        "state": "under_investigation",
-        "risk_level": UNKNOWN,
-        "risk_rule_id": UNKNOWN,
-        "confidence": "low",
-        "details": details,
-    }
-    return finding
+    finding = Finding(
+        finding_id=finding_id(detector, purl, anomaly_type, []),
+        kind="anomaly",
+        component_id=str(component_id),
+        purl=purl,
+        advisory_id=None,
+        aliases=[],
+        anomaly_type=anomaly_type,
+        confirmed_by=[],
+        source_severity=UNKNOWN,
+        fixed_versions=[],
+        match_basis="purl",
+        dependency_path=[],
+        path_count=None,
+        evidence_ids=list(evidence_ids),
+        state="under_investigation",
+        risk_level="unknown",
+        risk_rule_id=None,
+        confidence="low",
+    )
+    return finding, details
 
 
 def relative_file(path: Path, root: Path) -> str:

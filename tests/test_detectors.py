@@ -23,12 +23,21 @@ def _component(name: str, version: str, *, scope: str = "transitive") -> dict[st
     }
 
 
+def _as_dict(value: object) -> dict[str, object]:
+    return value.model_dump(mode="json")  # type: ignore[attr-defined,no-any-return]
+
+
 def _result_findings(result: object) -> list[dict[str, object]]:
-    return result.findings  # type: ignore[attr-defined,no-any-return]
+    findings = result.findings  # type: ignore[attr-defined]
+    return [_as_dict(finding) for finding in findings]
 
 
 def _result_coverage(result: object) -> list[dict[str, object]]:
-    return result.coverage  # type: ignore[attr-defined,no-any-return]
+    return [_as_dict(row) for row in result.coverage]  # type: ignore[attr-defined,no-any-return]
+
+
+def _finding_details(result: object, finding: dict[str, object]) -> dict[str, object]:
+    return result.finding_details[finding["finding_id"]]  # type: ignore[attr-defined,no-any-return]
 
 
 def test_sbom_diff_reports_added_and_updated_components_only() -> None:
@@ -45,7 +54,7 @@ def test_sbom_diff_reports_added_and_updated_components_only() -> None:
     result = detect_sbom_diff(current, baseline)
 
     findings = _result_findings(result)
-    assert {(f["anomaly_type"], f["details"]["name"]) for f in findings} == {
+    assert {(f["anomaly_type"], _finding_details(result, f)["name"]) for f in findings} == {
         ("unexpected_dependency", "added"),
         ("dependency_update", "updated"),
     }
@@ -85,11 +94,13 @@ def test_git_diff_emits_hash_and_line_range_evidence_for_relevant_files(tmp_path
     result = detect_git_diff(tmp_path, baseline, ecosystems=["npm"])
 
     assert _result_findings(result) == []
-    evidence = result.evidence  # type: ignore[attr-defined]
+    evidence = [_as_dict(item) for item in result.evidence]  # type: ignore[attr-defined]
     assert len(evidence) == 1
-    assert evidence[0]["file"] == "package.json"
-    assert evidence[0]["pointer"] == "lines:1-1"
-    assert evidence[0]["old_sha256"] != evidence[0]["new_sha256"]
+    assert evidence[0]["file"] == "raw/git-diff/package.json.patch"
+    assert "lines:1-1" in evidence[0]["pointer"]
+    assert "old_sha256=" in evidence[0]["pointer"]
+    assert "new_sha256=" in evidence[0]["pointer"]
+    assert "raw/git-diff/package.json.patch" in result.artifacts  # type: ignore[attr-defined]
     assert _result_coverage(result)[0]["status"] == "finding"
 
 
@@ -125,7 +136,11 @@ def test_typosquat_flags_near_name_without_hard_coding_suspect(tmp_path: Path) -
             _component("ngy-cookie", "1.0.0", scope="direct"),
             _component("react", "18.0.0", scope="direct"),
             _component("scoped-typo", "1.0.0", scope="transitive"),
-            {**_component("wrong-cookie", "1.0.0", scope="direct"), "name": "@team/ngy-cookie", "purl": "pkg:npm/%40team/ngy-cookie@1.0.0"},
+            {
+                **_component("wrong-cookie", "1.0.0", scope="direct"),
+                "name": "@team/ngy-cookie",
+                "purl": "pkg:npm/%40team/ngy-cookie@1.0.0",
+            },
         ]
     }
 
@@ -133,10 +148,19 @@ def test_typosquat_flags_near_name_without_hard_coding_suspect(tmp_path: Path) -
 
     findings = _result_findings(result)
     assert len(findings) == 2
-    assert {f["details"]["package_name"] for f in findings} == {"ngy-cookie", "@team/ngy-cookie"}
+    assert {_finding_details(result, f)["package_name"] for f in findings} == {
+        "ngy-cookie",
+        "@team/ngy-cookie",
+    }
     assert all(f["anomaly_type"] == "suspected_typosquat" for f in findings)
-    assert all(f["details"]["nearest_popular_name"] == "ngx-cookie" for f in findings)
-    assert all(f["details"]["distance"] == 1 and f["details"]["threshold"] == 2 for f in findings)
+    assert all(
+        _finding_details(result, f)["nearest_popular_name"] == "ngx-cookie" for f in findings
+    )
+    assert all(
+        _finding_details(result, f)["distance"] == 1
+        and _finding_details(result, f)["threshold"] == 2
+        for f in findings
+    )
 
 
 def test_typosquat_respects_allowlist(tmp_path: Path) -> None:
@@ -168,7 +192,10 @@ def test_install_script_detects_only_new_or_changed_npm_entries(tmp_path: Path) 
 
     result = detect_install_scripts(path, baseline_lockfile=baseline, ecosystems=["npm"])
 
-    assert {f["details"]["package_name"] for f in _result_findings(result)} == {"pkg", "new"}
+    assert {
+        _finding_details(result, finding)["package_name"]
+        for finding in _result_findings(result)
+    } == {"pkg", "new"}
     assert all(f["anomaly_type"] == "install_script_change" for f in _result_findings(result))
     assert _result_coverage(result)[0]["status"] == "finding"
 
@@ -215,8 +242,8 @@ def test_image_pin_flags_unpinned_from_and_ignores_digest(tmp_path: Path) -> Non
     findings = _result_findings(result)
     assert len(findings) == 1
     assert findings[0]["anomaly_type"] == "unpinned_base_image"
-    assert findings[0]["details"]["image"] == "python:3.11"
-    assert findings[0]["details"]["line"] == 1
+    assert _finding_details(result, findings[0])["image"] == "python:3.11"
+    assert _finding_details(result, findings[0])["line"] == 1
     assert len(_result_coverage(result)) == 2
 
 
@@ -233,7 +260,10 @@ def test_ci_pin_flags_non_sha_and_ignores_local_and_full_sha(tmp_path: Path) -> 
     workflow = tmp_path / ".github" / "workflows" / "ci.yml"
     workflow.parent.mkdir(parents=True)
     workflow.write_text(
-        "steps:\n  - uses: actions/checkout@v4\n  - uses: owner/action@" + "b" * 40 + "\n  - uses: ./local\n",
+        "steps:\n  - uses: actions/checkout@v4\n"
+        + "  - uses: owner/action@"
+        + "b" * 40
+        + "\n  - uses: ./local\n",
         encoding="utf-8",
     )
 
@@ -242,8 +272,8 @@ def test_ci_pin_flags_non_sha_and_ignores_local_and_full_sha(tmp_path: Path) -> 
     findings = _result_findings(result)
     assert len(findings) == 1
     assert findings[0]["anomaly_type"] == "unpinned_ci_action"
-    assert findings[0]["details"]["action"] == "actions/checkout@v4"
-    assert findings[0]["details"]["line"] == 2
+    assert _finding_details(result, findings[0])["action"] == "actions/checkout@v4"
+    assert _finding_details(result, findings[0])["line"] == 2
 
 
 def test_ci_pin_full_sha_only_passes(tmp_path: Path) -> None:

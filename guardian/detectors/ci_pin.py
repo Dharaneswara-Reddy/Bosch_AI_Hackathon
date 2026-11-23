@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 import re
+from pathlib import Path
 from typing import Any
 
 from guardian.detectors._common import (
@@ -22,7 +22,11 @@ def _workflows(root: Path) -> list[Path]:
     directory = root / ".github" / "workflows"
     if not directory.is_dir():
         return []
-    return sorted(path for path in directory.rglob("*") if path.is_file() and path.suffix.casefold() in {".yml", ".yaml"})
+    return sorted(
+        path
+        for path in directory.rglob("*")
+        if path.is_file() and path.suffix.casefold() in {".yml", ".yaml"}
+    )
 
 
 def _action_component(action: str) -> dict[str, Any]:
@@ -39,12 +43,14 @@ def _action_component(action: str) -> dict[str, Any]:
 def detect(target_path: Path, *, ecosystems: list[str] | None = None) -> DetectionResult:
     root = Path(target_path)
     known_ecosystems = ecosystem_list([], ecosystems)
-    findings: list[dict[str, Any]] = []
-    evidence: list[dict[str, Any]] = []
+    findings = []
+    evidence = []
+    finding_details: dict[str, dict[str, Any]] = {}
     for workflow in _workflows(root):
         raw = workflow.read_bytes()
         relative = workflow.relative_to(root).as_posix()
-        for line_number, line in enumerate(raw.decode("utf-8", errors="replace").splitlines(), start=1):
+        lines = raw.decode("utf-8", errors="replace").splitlines()
+        for line_number, line in enumerate(lines, start=1):
             if line.lstrip().startswith("#"):
                 continue
             match = _USES.match(line)
@@ -58,20 +64,23 @@ def detect(target_path: Path, *, ecosystems: list[str] | None = None) -> Detecti
                 continue
             record = evidence_record("ci_pin", relative, f"lines:{line_number}-{line_number}", raw)
             evidence.append(record)
-            findings.append(
-                finding_payload(
-                    "ci_pin",
-                    _action_component(action),
-                    "unpinned_ci_action",
-                    [record["evidence_id"]],
-                    action=action,
-                    file=relative,
-                    line=line_number,
-                )
+            finding, details = finding_payload(
+                "ci_pin",
+                _action_component(action),
+                "unpinned_ci_action",
+                [record.evidence_id],
+                action=action,
+                file=relative,
+                line=line_number,
             )
+            findings.append(finding)
+            finding_details[finding.finding_id] = details
     counts = {ecosystem: 0 for ecosystem in known_ecosystems}
     return DetectionResult(
         findings=findings,
         evidence=evidence,
-        coverage=coverage_rows("ci_pin", known_ecosystems, "finding" if findings else "pass", "", counts),
+        coverage=coverage_rows(
+            "ci_pin", known_ecosystems, "finding" if findings else "pass", "", counts
+        ),
+        finding_details=finding_details,
     )

@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime, timezone
-from pathlib import Path
 import re
 import subprocess
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from guardian.detectors._common import DetectionResult, coverage_rows, sha256_bytes
+from guardian.models import Evidence
 
 _LOCKFILES = {
     "package-lock.json",
@@ -86,15 +87,28 @@ def detect(
     known_ecosystems = sorted(set(ecosystems or [])) or ["any"]
     counts = {ecosystem: 0 for ecosystem in known_ecosystems}
     if not baseline_commit:
-        return DetectionResult(coverage=coverage_rows("git_diff", known_ecosystems, "n/a", "No baseline commit", counts))
-    name_result = _git(root, "diff", "--name-only", "--diff-filter=ACDMRTUXB", baseline_commit, "--")
+        return DetectionResult(
+            coverage=coverage_rows(
+                "git_diff", known_ecosystems, "n/a", "No baseline commit", counts
+            )
+        )
+    name_result = _git(
+        root, "diff", "--name-only", "--diff-filter=ACDMRTUXB", baseline_commit, "--"
+    )
     if name_result.returncode != 0:
-        return DetectionResult(coverage=coverage_rows("git_diff", known_ecosystems, "error", name_result.stderr.strip(), counts))
-    evidence: list[dict[str, Any]] = []
+        return DetectionResult(
+            coverage=coverage_rows(
+                "git_diff", known_ecosystems, "error", name_result.stderr.strip(), counts
+            )
+        )
+    evidence: list[Evidence] = []
+    artifacts: dict[str, bytes] = {}
     for path in sorted(set(name_result.stdout.splitlines())):
         if not _relevant(path):
             continue
-        patch_result = _git(root, "diff", "--no-ext-diff", "--unified=0", baseline_commit, "--", path)
+        patch_result = _git(
+            root, "diff", "--no-ext-diff", "--unified=0", baseline_commit, "--", path
+        )
         if patch_result.returncode != 0:
             continue
         patch = patch_result.stdout
@@ -103,20 +117,30 @@ def detect(
         new_content = current_path.read_bytes() if current_path.is_file() else None
         old_hash = sha256_bytes(old_content) if old_content is not None else "UNKNOWN"
         new_hash = sha256_bytes(new_content) if new_content is not None else "UNKNOWN"
-        evidence_id = hashlib.sha256(f"git_diff\0{path}\0{old_hash}\0{new_hash}".encode("utf-8")).hexdigest()[:24]
-        evidence.append(
-            {
-                "evidence_id": evidence_id,
-                "tool": "guardian:git_diff",
-                "tool_version": "1",
-                "file": path,
-                "pointer": _line_pointer(patch),
-                "sha256": sha256_bytes(patch.encode("utf-8")),
-                "collected_at": datetime.now(timezone.utc).isoformat(),
-                "old_sha256": old_hash,
-                "new_sha256": new_hash,
-                "diff": patch,
-            }
+        patch_bytes = patch.encode("utf-8")
+        artifact_file = f"raw/git-diff/{path}.patch"
+        pointer = (
+            f"target_file={path};{_line_pointer(patch)};"
+            f"old_sha256={old_hash};new_sha256={new_hash}"
         )
+        evidence_id = hashlib.sha256(
+            f"git_diff\0{artifact_file}\0{pointer}\0{sha256_bytes(patch_bytes)}".encode()
+        ).hexdigest()[:24]
+        evidence.append(
+            Evidence(
+                evidence_id=evidence_id,
+                tool="guardian:git_diff",
+                tool_version="1",
+                file=artifact_file,
+                pointer=pointer,
+                sha256=sha256_bytes(patch_bytes),
+                collected_at=datetime.now(UTC),
+            )
+        )
+        artifacts[artifact_file] = patch_bytes
     status = "finding" if evidence else "pass"
-    return DetectionResult(evidence=evidence, coverage=coverage_rows("git_diff", known_ecosystems, status, "", counts))
+    return DetectionResult(
+        evidence=evidence,
+        coverage=coverage_rows("git_diff", known_ecosystems, status, "", counts),
+        artifacts=artifacts,
+    )

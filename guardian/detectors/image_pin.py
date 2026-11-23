@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 import re
+from pathlib import Path
 from typing import Any
 
 from guardian.detectors._common import (
@@ -12,7 +12,6 @@ from guardian.detectors._common import (
     ecosystem_list,
     evidence_record,
     finding_payload,
-    sha256_bytes,
 )
 
 _FROM = re.compile(r"^\s*FROM\s+(?:(?:--platform=\S+)\s+)?(?P<image>\S+)", re.IGNORECASE)
@@ -40,8 +39,9 @@ def _image_component(image: str) -> dict[str, Any]:
 def detect(target_path: Path, *, ecosystems: list[str] | None = None) -> DetectionResult:
     root = Path(target_path)
     known_ecosystems = ecosystem_list([], ecosystems)
-    findings: list[dict[str, Any]] = []
-    evidence: list[dict[str, Any]] = []
+    findings = []
+    evidence = []
+    finding_details: dict[str, dict[str, Any]] = {}
     for dockerfile in _dockerfiles(root):
         raw = dockerfile.read_bytes()
         lines = raw.decode("utf-8", errors="replace").splitlines()
@@ -55,25 +55,28 @@ def detect(target_path: Path, *, ecosystems: list[str] | None = None) -> Detecti
             image = match.group("image")
             if image.casefold() == "scratch" or "@sha256:" in image:
                 continue
-            record = evidence_record("image_pin", relative, f"lines:{line_number}-{line_number}", raw)
+            pointer = f"lines:{line_number}-{line_number}"
+            record = evidence_record("image_pin", relative, pointer, raw)
             evidence.append(record)
-            tag = image.rsplit("/", 1)[-1].partition(":")[2] if ":" in image.rsplit("/", 1)[-1] else ""
-            findings.append(
-                finding_payload(
-                    "image_pin",
-                    _image_component(image),
-                    "unpinned_base_image",
-                    [record["evidence_id"]],
-                    image=image,
-                    file=relative,
-                    line=line_number,
-                    tag_warning="latest or missing tag" if not tag or tag == "latest" else "",
-                )
+            last_part = image.rsplit("/", 1)[-1]
+            tag = last_part.partition(":")[2] if ":" in last_part else ""
+            finding, details = finding_payload(
+                "image_pin",
+                _image_component(image),
+                "unpinned_base_image",
+                [record.evidence_id],
+                image=image,
+                file=relative,
+                line=line_number,
+                tag_warning="latest or missing tag" if not tag or tag == "latest" else "",
             )
+            findings.append(finding)
+            finding_details[finding.finding_id] = details
     counts = {ecosystem: 0 for ecosystem in known_ecosystems}
     status = "finding" if findings else "pass"
     return DetectionResult(
         findings=findings,
         evidence=evidence,
         coverage=coverage_rows("image_pin", known_ecosystems, status, "", counts),
+        finding_details=finding_details,
     )
