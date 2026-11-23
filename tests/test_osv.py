@@ -39,7 +39,9 @@ def _synthetic(
 def test_one_finding_per_package_vulnerability(raw: dict[str, Any]) -> None:
     findings, evidence = parse_osv(raw, "raw/osv.json", SHA, "2.7.1")
     assert len(findings) == 8
-    assert len(evidence) == 8
+    with_vector = [f for f in findings if f.cvss_vector]
+    assert len(evidence) == 8 + len(with_vector)
+    assert {i for f in findings for i in f.intel_evidence_ids} <= {e.evidence_id for e in evidence}
 
 
 def test_purl_taken_from_package(raw: dict[str, Any]) -> None:
