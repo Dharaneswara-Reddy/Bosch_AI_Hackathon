@@ -237,7 +237,11 @@ def _provider_error(exc: Exception) -> LLMError:
     if "timeout" in type(exc).__name__.lower():
         return LLMTimeout("No reply within the deadline.")
     if status == 400:
-        return LLMBadResponse("Provider rejected the reply as not matching the agent schema (400).")
+        detail = _provider_message(exc)
+        return LLMBadResponse(
+            "Provider rejected the reply as not matching the agent schema (400)."
+            + (f" {detail}" if detail else "")
+        )
     hints = {401: " Check GUARDIAN_LLM_API_KEY.", 403: " Key lacks access.", 429: " Rate limited."}
     if isinstance(status, int):
         detail = _provider_message(exc)
@@ -270,12 +274,28 @@ def groq_client(
     return LangChainChatClient(chat, name="groq", rate_limit_retries=rate_limit_retries)
 
 
+def _http_message(exc: urllib.error.HTTPError) -> str:
+    """The provider's error text; Gemini wraps the OpenAI-style error object in a list."""
+    try:
+        data = json.loads(exc.read() or b"null")
+    except (OSError, json.JSONDecodeError):
+        return ""
+    error = (data[0] if isinstance(data, list) and data else data) or {}
+    error = error.get("error", error) if isinstance(error, dict) else {}
+    message = error.get("message") if isinstance(error, dict) else None
+    return str(message)[:300] if message else ""
+
+
 def _http_error(exc: urllib.error.HTTPError) -> LLMError:
-    """400 = the model broke the schema (retry once); anything else trips the circuit breaker."""
-    if exc.code == 400:
-        return LLMBadResponse("Provider rejected the reply as not matching the claim schema (400).")
-    hints = {401: " Check GROQ_API_KEY.", 403: " Key lacks access.", 429: " Rate limited."}
-    return LLMError(f"Provider returned HTTP {exc.code}.{hints.get(exc.code, '')}")
+    """A 400 is a schema break (retry once) unless it is a bad key, which trips the breaker."""
+    detail = _http_message(exc)
+    suffix = f" {detail}" if detail else ""
+    if exc.code == 400 and "api key" not in detail.lower():
+        return LLMBadResponse(
+            f"Provider rejected the reply as not matching the claim schema (400).{suffix}"
+        )
+    hints = {401: " Check the API key.", 403: " Key lacks access.", 429: " Rate limited."}
+    return LLMError(f"Provider returned HTTP {exc.code}.{hints.get(exc.code, '')}{suffix}")
 
 
 _FENCE = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE)

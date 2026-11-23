@@ -85,6 +85,16 @@ def test_provider_errors_are_mapped(error: Exception, expected: type[LLMError]) 
     assert KEY not in str(info.value)
 
 
+def test_schema_rejection_keeps_the_provider_message() -> None:
+    error = _StatusError(400)
+    error.body = {"message": "Generated JSON does not match the expected schema"}  # type: ignore[attr-defined]
+    client = LangChainChatClient(
+        _Failing(messages=iter([]), error=error), name="f", strict_schema=False
+    )
+    with pytest.raises(LLMBadResponse, match="does not match the expected schema"):
+        client.complete("s", "u", STRICT_REPLY_SCHEMA, 5)
+
+
 @pytest.mark.parametrize(
     ("schema", "model", "sample"),
     [
@@ -199,10 +209,13 @@ def test_other_provider_errors_are_not_retried() -> None:
 
 
 def test_rate_limit_retry_count_comes_from_env() -> None:
-    client = client_from_env({
-        "GUARDIAN_LLM_PROVIDER": "groq", "GUARDIAN_LLM_API_KEY": KEY,
-        "GUARDIAN_LLM_RATE_LIMIT_RETRIES": "5",
-    })
+    client = client_from_env(
+        {
+            "GUARDIAN_LLM_PROVIDER": "groq",
+            "GUARDIAN_LLM_API_KEY": KEY,
+            "GUARDIAN_LLM_RATE_LIMIT_RETRIES": "5",
+        }
+    )
     assert isinstance(client, LangChainChatClient)
     assert client.rate_limit_retries == 5
 
@@ -225,10 +238,13 @@ def test_rate_limit_error_carries_the_provider_message() -> None:
 
 
 def test_groq_completion_size_is_capped_from_env() -> None:
-    client = client_from_env({
-        "GUARDIAN_LLM_PROVIDER": "groq", "GUARDIAN_LLM_API_KEY": KEY,
-        "GUARDIAN_LLM_MAX_TOKENS": "1500",
-    })
+    client = client_from_env(
+        {
+            "GUARDIAN_LLM_PROVIDER": "groq",
+            "GUARDIAN_LLM_API_KEY": KEY,
+            "GUARDIAN_LLM_MAX_TOKENS": "1500",
+        }
+    )
     assert isinstance(client, LangChainChatClient)
     assert client._model.max_tokens == 1500
     assert groq_client(api_key=KEY)._model.max_tokens == 2048

@@ -104,6 +104,37 @@ def test_ai_off_stays_off_even_with_fallback_keys() -> None:
     assert isinstance(with_fallbacks(NoneClient(), "none", env), NoneClient)
 
 
+def _http_400(monkeypatch: pytest.MonkeyPatch, message: str) -> None:
+    import urllib.error
+
+    def urlopen(request: Any, timeout: float) -> io.BytesIO:
+        body = io.BytesIO(json.dumps([{"error": {"code": 400, "message": message}}]).encode())
+        raise urllib.error.HTTPError(request.full_url, 400, "Bad Request", None, body)  # type: ignore[arg-type]
+
+    monkeypatch.setattr("urllib.request.urlopen", urlopen)
+
+
+def test_invalid_key_400_is_a_provider_failure_with_its_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from guardian.ai.llm import OpenAICompatibleClient
+
+    _http_400(monkeypatch, "API key not valid. Please pass a valid API key.")
+    client = OpenAICompatibleClient("https://example.invalid/v1", "bad", "m")
+    with pytest.raises(LLMError, match="API key not valid") as info:
+        client.complete("s", "u", STRICT_REPLY_SCHEMA, 5)
+    assert not isinstance(info.value, LLMBadResponse)
+
+
+def test_schema_400_keeps_the_provider_message(monkeypatch: pytest.MonkeyPatch) -> None:
+    from guardian.ai.llm import OpenAICompatibleClient
+
+    _http_400(monkeypatch, "Generated JSON does not match the schema")
+    client = OpenAICompatibleClient("https://example.invalid/v1", "k", "m")
+    with pytest.raises(LLMBadResponse, match="does not match the schema"):
+        client.complete("s", "u", STRICT_REPLY_SCHEMA, 5)
+
+
 def _captured_request(monkeypatch: pytest.MonkeyPatch, env: dict[str, str]) -> Any:
     sent: dict[str, Any] = {}
 
