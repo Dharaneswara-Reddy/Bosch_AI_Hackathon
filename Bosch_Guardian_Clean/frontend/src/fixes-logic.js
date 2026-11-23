@@ -30,3 +30,8 @@ export function buildDecision(approved, reviewer, note) {
   if (!name) return {error: 'Enter your name so the decision is recorded.'};
   return {body: {approved, reviewer: name, note: note.trim()}};
 }
+
+export function stepCounts(step) {
+  if (step.total == null || step.passed == null) return '';
+  return `${step.passed} of ${step.total} passed` + (step.failed ? `, ${step.failed} failed` : '');
+}

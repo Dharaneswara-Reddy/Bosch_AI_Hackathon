@@ -23,10 +23,6 @@ IGNORED_DIRS = frozenset({"node_modules", ".git"})
 SOURCE_SUFFIXES = frozenset({".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx"})
 NPM_SECTIONS = ("dependencies", "devDependencies", "optionalDependencies")
 TOOL_TIMEOUT_S = 300
-TEST_TIMEOUT_S = 600
-CONTAINER_IMAGE = "node:20-slim"
-TEST_LIMITS = ("--cpus", "1", "--memory", "512m", "--pids-limit", "256")
-DEFAULT_TEST_SCRIPT = "no test specified"
 GEMFILE_DSL = re.compile(
     r"^\s*(?:#.*|source\b.*|gem\s.*|group\b.*|platforms?\b.*|ruby\b.*|end|git_source\b.*|)$"
 )
@@ -61,6 +57,11 @@ class TestRun(BaseModel):
 
     status: Literal["passed", "failed", "not_run"]
     reason: str = ""
+    passed: int | None = None
+    failed: int | None = None
+    total: int | None = None
+    failed_tests: list[str] = []
+    output_tail: list[str] = []
 
 
 def run_command(command: Sequence[str], cwd: Path, timeout: int) -> CommandResult:
@@ -229,45 +230,3 @@ def build_check(root: Path, target: FixTarget, run: Runner = run_command) -> Ste
         if result.status != "passed":
             return result
     return StepResult(status="passed", detail="dependency resolution succeeded")
-
-
-def _has_source(root: Path) -> bool:
-    return any(path.suffix in SOURCE_SUFFIXES for path in _files(root, "*"))
-
-
-def _test_script(root: Path) -> str | None:
-    manifest = root / "package.json"
-    if not manifest.is_file():
-        return None
-    script = json.loads(manifest.read_text(encoding="utf-8")).get("scripts", {}).get("test")
-    return None if not script or DEFAULT_TEST_SCRIPT in script else str(script)
-
-
-def _container(engine: str, root: Path, *, offline: bool) -> list[str]:
-    mount = f"{root}:/work" + (":ro" if offline else "")
-    isolation = ["--network", "none", "--read-only", "--cap-drop", "ALL"] if offline else []
-    user = f"{os.getuid()}:{os.getgid()}"
-    return [engine, "run", "--rm", *isolation, *TEST_LIMITS, "--user", user,
-            "--security-opt", "no-new-privileges", "--tmpfs", "/tmp", "-e", "HOME=/tmp",
-            "-v", mount, "-w", "/work", CONTAINER_IMAGE]
-
-
-def _skipped(reason: str) -> TestRun:
-    return TestRun(status="not_run", reason=reason)
-
-
-def run_tests(root: Path, run: Runner = run_command, engine: str | None = None) -> TestRun:
-    if not _has_source(root):
-        return _skipped("only manifests were fetched; no source to test")
-    if _test_script(root) is None:
-        return _skipped("the project defines no test script (scripts.test)")
-    if engine is None:
-        return _skipped("no container engine (docker/podman); tests never run on the host")
-    install = run([*_container(engine, root, offline=False), "npm", "ci", "--ignore-scripts",
-                   "--no-audit", "--no-fund"], root, TEST_TIMEOUT_S)
-    if install.returncode != 0:
-        return _skipped(f"container dependency install failed: {install.output}")
-    done = run([*_container(engine, root, offline=True), "npm", "test"], root, TEST_TIMEOUT_S)
-    if done.returncode == 0:
-        return TestRun(status="passed", reason="npm test passed in an isolated container")
-    return TestRun(status="failed", reason=f"npm test failed ({done.returncode}): {done.output}")

@@ -19,6 +19,7 @@ from guardian.remediate.run import (
     FixPlanError,
     FixRun,
     FixStatus,
+    failure_summary,
     load_fix,
     resolve_target,
     save_fix,
@@ -96,3 +97,36 @@ def test_summary_mentions_new_findings_and_failed_build() -> None:
     assert verification_summary(run) == (
         "No findings were fixed. Introduced 1 new finding: 1 Critical (CVE-9). "
         "Build check failed: ETARGET. Tests passed.")
+
+
+def _failed_tests(**extra: object) -> TestRun:
+    return TestRun(status="failed", passed=1, failed=2, total=3,
+                   failed_tests=["auth rejects a missing token", "server answers"], **extra)
+
+
+def test_failing_tests_make_the_summary_say_not_safe_to_apply() -> None:
+    diff = RescanDiff(counts_before={}, counts_after={}, fixed=[_ref("CVE-1", RiskLevel.HIGH)])
+    run = FixRun(scan_id="s", proposal=_proposal(), diff=diff, build=StepResult(status="passed"),
+                 tests=_failed_tests())
+    assert failure_summary(run) == (
+        "Tests failed: 2 of 3 — the upgrade breaks auth rejects a missing token, "
+        "server answers; not safe to apply.")
+    assert verification_summary(run).startswith("Tests failed: 2 of 3 — the upgrade breaks")
+    assert "Fixed 1 High (CVE-1)" in verification_summary(run)
+
+
+def test_a_failing_application_build_is_not_safe_to_apply() -> None:
+    run = FixRun(scan_id="s", proposal=_proposal(),
+                 app_build=TestRun(status="failed", reason="npm run build failed (exit 2)"))
+    assert failure_summary(run) == "Build failed: npm run build failed (exit 2); not safe to apply."
+
+
+def test_a_passing_run_has_no_failure_summary_and_reports_counts() -> None:
+    diff = RescanDiff(counts_before={}, counts_after={})
+    run = FixRun(scan_id="s", proposal=_proposal(), diff=diff, build=StepResult(status="passed"),
+                 app_build=TestRun(status="passed"),
+                 tests=TestRun(status="passed", passed=7, total=7))
+    assert failure_summary(run) is None
+    assert verification_summary(run) == (
+        "No findings were fixed. No new findings. Build check passed. Build passed. "
+        "Tests passed (7 of 7).")

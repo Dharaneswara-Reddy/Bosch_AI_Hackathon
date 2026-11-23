@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 from langgraph.checkpoint.memory import MemorySaver
 
+from guardian.fetch import MANIFEST_NAME, FetchResult
 from guardian.models import (
     Component,
     Finding,
@@ -18,7 +19,7 @@ from guardian.models import (
     Scan,
     Scope,
 )
-from guardian.remediate.run import Decision, FixStatus, load_fix
+from guardian.remediate.run import Decision, FixRun, FixStatus, load_fix
 from guardian.remediate.sandbox import CommandResult
 from guardian.remediate.workflow import (
     FixDeps,
@@ -55,8 +56,10 @@ def _write_out(out: Path, run: RunResult) -> None:
 
 
 class Harness:
-    def __init__(self, work_dir: Path, ecosystem_ok: bool = True) -> None:
+    def __init__(self, work_dir: Path, engine: str | None = None) -> None:
         self.work_dir = work_dir
+        self.container_results: list[CommandResult] = []
+        self.container_calls: list[list[str]] = []
         self.commands: list[list[str]] = []
         self.scanned: list[Path] = []
         self.fail_resolution = False
@@ -66,7 +69,19 @@ class Harness:
             json.dumps({"dependencies": {"lodash": "4.17.4"}}), encoding="utf-8")
         _write_out(work_dir / "out", _run("4.17.4", with_finding=True))
         self.graph = build_fix_graph(
-            work_dir, MemorySaver(), FixDeps(runner=self.command, scan=self.scan, engine=None))
+            work_dir, MemorySaver(),
+            FixDeps(runner=self.command, scan=self.scan, engine=engine, capture=self.capture))
+
+    def capture(self, command: Sequence[str], cwd: Path, timeout: int) -> CommandResult:
+        self.container_calls.append(list(command))
+        return self.container_results.pop(0) if self.container_results else CommandResult(0, "")
+
+    def add_project_with_scripts(self) -> None:
+        repo = self.work_dir / "repo"
+        (repo / "package.json").write_text(json.dumps({
+            "dependencies": {"lodash": "4.17.4"},
+            "scripts": {"build": "node build.js", "test": "node --test"}}), encoding="utf-8")
+        (repo / "app.js").write_text("module.exports = 1", encoding="utf-8")
 
     def command(self, command: Sequence[str], cwd: Path, timeout: int) -> CommandResult:
         self.commands.append(list(command))
@@ -187,3 +202,52 @@ def test_a_pending_approval_survives_a_restart(tmp_path: Path) -> None:
     assert is_waiting(restarted, SCAN_ID, "p1")
     run = resume_fix(restarted, SCAN_ID, "p1", Decision(approved=True, reviewer="ana"))
     assert run.status is FixStatus.VERIFIED, run.error
+
+
+TAP_FAIL = "not ok 1 - auth rejects a missing token\nok 2 - lodash\n# tests 2\n# pass 1\n# fail 1\n"
+
+
+def _approve(harness: Harness) -> FixRun:
+    start_fix(harness.graph, SCAN_ID, harness.proposal())
+    return resume_fix(harness.graph, SCAN_ID, "p1", Decision(approved=True, reviewer="ana"))
+
+
+def test_failing_tests_mark_the_fix_failed_but_keep_the_rescan(tmp_path: Path) -> None:
+    harness = Harness(tmp_path / "scan", engine="docker")
+    harness.add_project_with_scripts()
+    harness.container_results = [CommandResult(0, ""), CommandResult(0, "built"),
+                                 CommandResult(1, TAP_FAIL)]
+    run = _approve(harness)
+    assert run.status is FixStatus.FAILED
+    assert run.summary.startswith(
+        "Tests failed: 1 of 2 — the upgrade breaks auth rejects a missing token; "
+        "not safe to apply.")
+    assert run.diff is not None and [f.advisory_id for f in run.diff.fixed] == ["CVE-2021-23337"]
+    assert run.app_build is not None and run.app_build.status == "passed"
+    stored = load_fix(harness.work_dir, "p1")
+    assert stored is not None and stored.status is FixStatus.FAILED
+
+
+def test_passing_build_and_tests_verify_the_fix(tmp_path: Path) -> None:
+    harness = Harness(tmp_path / "scan", engine="docker")
+    harness.add_project_with_scripts()
+    harness.container_results = [CommandResult(0, ""), CommandResult(0, "built"),
+                                 CommandResult(0, "# tests 7\n# pass 7\n# fail 0\n")]
+    run = _approve(harness)
+    assert run.status is FixStatus.VERIFIED, run.error
+    assert run.tests is not None and (run.tests.passed, run.tests.total) == (7, 7)
+    assert run.summary.endswith("Build check passed. Build passed. Tests passed (7 of 7).")
+    assert run.source is not None and run.source.status == "unsupported"
+
+
+def test_a_failed_source_clone_is_named_in_the_tests_not_run_reason(tmp_path: Path) -> None:
+    harness = Harness(tmp_path / "scan", engine="docker")
+    manifest = FetchResult(url="https://github.com/acme/shop", ref="main",
+                           commit_sha="b" * 40, dest=harness.work_dir / "repo")
+    (harness.work_dir / MANIFEST_NAME).write_text(manifest.model_dump_json(), encoding="utf-8")
+    harness.container_results = [CommandResult(128, "fatal: repository not found")]
+    run = _approve(harness)
+    assert run.status is FixStatus.VERIFIED, run.error
+    assert run.source is not None and run.source.status == "failed"
+    assert run.tests is not None and run.tests.status == "not_run"
+    assert "repository not found" in run.tests.reason
