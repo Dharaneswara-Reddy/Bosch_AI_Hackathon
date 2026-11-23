@@ -30,6 +30,7 @@ from guardian.remediate.workflow import (
     resume_fix,
     start_fix,
 )
+from guardian.report.render import render
 
 from . import pipeline
 from .schemas import ScanRecord
@@ -93,6 +94,14 @@ def _proposal(record: ScanRecord, proposal_id: str) -> RemediationProposal:
     raise HTTPException(404, f"No fix proposal '{proposal_id}' in this scan")
 
 
+def _resume_and_report(
+    graph: Graph, record: ScanRecord, proposal_id: str, decision: Decision
+) -> FixRun:
+    run = resume_fix(graph, record.scan_id, proposal_id, decision)
+    render(record.work_dir / "out")
+    return run
+
+
 @router.get("")
 def list_fixes(scan_id: str) -> list[FixEntry]:
     record = _finished(scan_id)
@@ -140,10 +149,11 @@ def decide(
     if stored is None or not is_waiting(graph, scan_id, proposal_id):
         raise HTTPException(409, (
             "No approval is pending for this fix. Start it first with POST .../start"))
-    decision = Decision(approved=body.approved, reviewer=body.reviewer, note=body.note)
+    decision = Decision(approved=body.approved, reviewer=body.reviewer, note=body.note,
+                        decided_at=datetime.now(UTC))
     if not decision.approved:
-        return resume_fix(graph, scan_id, proposal_id, decision)
+        return _resume_and_report(graph, record, proposal_id, decision)
     running = stored.model_copy(update={"status": FixStatus.RUNNING, "decision": decision})
     save_fix(record.work_dir, running)
-    background.add_task(resume_fix, graph, scan_id, proposal_id, decision)
+    background.add_task(_resume_and_report, graph, record, proposal_id, decision)
     return running

@@ -1,6 +1,7 @@
 """The persisted state of one fix: proposal, approval, sandbox steps and rescan result."""
 
 import json
+from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 
@@ -26,10 +27,14 @@ class FixStatus(StrEnum):
     FAILED = "failed"
 
 
+_TERMINAL = (FixStatus.VERIFIED, FixStatus.FAILED, FixStatus.REJECTED)
+
+
 class Decision(BaseModel):
     approved: bool
     reviewer: str
     note: str = ""
+    decided_at: datetime | None = None
 
 
 class FixRun(BaseModel):
@@ -44,6 +49,7 @@ class FixRun(BaseModel):
     diff: RescanDiff | None = None
     summary: str = ""
     error: str | None = None
+    completed_at: datetime | None = None
 
 
 def resolve_target(proposal: RemediationProposal, run: RunResult) -> FixTarget:
@@ -62,6 +68,10 @@ def resolve_target(proposal: RemediationProposal, run: RunResult) -> FixTarget:
 
 
 def save_fix(work_dir: Path, run: FixRun) -> None:
+    if run.completed_at is None and run.status in _TERMINAL:
+        stored = load_fix(work_dir, run.proposal.proposal_id)
+        stamp = stored.completed_at if stored else None
+        run = run.model_copy(update={"completed_at": stamp or datetime.now(UTC)})
     folder = work_dir / "fixes" / run.proposal.proposal_id
     folder.mkdir(parents=True, exist_ok=True)
     (folder / FIX_FILE).write_text(run.model_dump_json(indent=2), encoding="utf-8")

@@ -106,3 +106,11 @@ def test_running_scan_is_a_409(client: TestClient) -> None:
     pipeline.SCANS["scan1"].status = "running"
     assert client.get("/scan/scan1/review").status_code == 409
     assert client.post("/scan/scan1/review/a", json={"decision": "confirmed"}).status_code == 409
+
+
+def test_review_decision_regenerates_report_json(client: TestClient) -> None:
+    response = client.post("/scan/scan1/review/a", json={
+        "decision": "dismissed", "note": "dev only", "reviewer": "bo"})
+    assert response.status_code == 200
+    report = client.get("/scan/scan1/report.json").json()
+    assert [(r["finding_id"], r["reviewer"]) for r in report["accepted_risks"]] == [("a", "bo")]

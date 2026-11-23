@@ -151,12 +151,85 @@ None recorded.
 {% endfor %}
 {% endfor %}
 
-## Fix proposals (human approval required)
+## Remediation & validation
 
+Nothing is applied without a named human approval. Machine-readable twin: `report.json`.
+
+### Recommended actions
+
+{% for item in final.recommended_actions %}
+{% set orig = final_findings.get(item.finding_id) %}
+- `{{ item.proposal_id|md }}` ({{ item.source }}, {{ item.status|replace("_", " ") }}): {{ item.action|replace("_", " ") }}{% if item.target_version %} to {{ item.target_version|md }}{% endif %} for {{ (orig.advisory_id if orig and orig.advisory_id else item.finding_id)|md }}. {{ item.rationale|md }} Breaking-change risk {{ item.breaking_change_risk|md }}.{% if item.rejected_reason %} Rejected: {{ item.rejected_reason|md }}{% endif %}{{ "\n" -}}
+{% else %}
+No fix proposals were produced.
+{% endfor %}
 {% for claim in fixes %}
 - **{{ "Proposed" if claim.validated else "Rejected" }}:** {{ claim.text|md }}{% if claim.rejected_reason %} Reason: {{ claim.rejected_reason|md }}{% endif %}{{ "\n" -}}
+{% endfor %}
+
+### Validation results
+
+{% for v in final.validations %}
+#### {{ v.proposal_id|md }}: {{ v.verdict|replace("_", " ") }}{% if v.confidence %} (final confidence {{ v.confidence }}){% endif %}
+
+- Original finding: {{ (v.advisory_id or v.finding_id)|md }} in {{ v.package|md }}
+- Action: {{ v.action|replace("_", " ") }}; status {{ v.status|replace("_", " ") }}
+- Approval: {% if v.approved is none %}no decision recorded{% else %}{{ "approved" if v.approved else "rejected" }} by {{ v.reviewer|md }} at {{ v.decided_at.isoformat() if v.decided_at else "time not recorded" }}{% if v.note %}: {{ v.note|md }}{% endif %}{% endif %}
+
+- Build: {{ v.build_status or "not run" }}{% if v.build_detail %}: {{ v.build_detail|md }}{% endif %}
+
+- Tests: {{ (v.tests_status or "not run")|replace("_", " ") }}{% if v.tests_detail %}: {{ v.tests_detail|md }}{% endif %}
+
+{% if v.counts_before %}
+| Risk | critical | high | medium | low |
+|---|---:|---:|---:|---:|
+| Before | {% for level in ["critical", "high", "medium", "low"] %}{{ v.counts_before.get(level, 0) }} | {% endfor %}
+
+| After | {% for level in ["critical", "high", "medium", "low"] %}{{ v.counts_after.get(level, 0) }} | {% endfor %}
+
+{% endif %}
+- Fixed: {% for ref in v.fixed %}{{ (ref.advisory_id or ref.finding_id)|md }} ({{ ref.package|md }} {{ ref.version|md }}, {{ ref.risk_level }}){% if not loop.last %}, {% endif %}{% else %}none{% endfor %}
+
+- New findings: {% for ref in v.introduced %}{{ (ref.advisory_id or ref.finding_id)|md }} ({{ ref.package|md }} {{ ref.version|md }}, {{ ref.risk_level }}){% if not loop.last %}, {% endif %}{% else %}none{% endfor %}
+
+{% if v.summary %}
+{{ v.summary|md }}
+
+{% endif %}
 {% else %}
-No fix proposals (AI review off, failed, or no finding passed validation).
+No fix has been approved or run yet.
+
+{% endfor %}
+### Remaining risk
+
+{% for r in final.remaining_risks %}
+- {{ r.risk_level }} {{ (r.advisory_id or r.finding_id)|md }} in {{ r.package|md }} ({{ r.origin|md }})
+{% else %}
+No open findings remain.
+{% endfor %}
+
+### Accepted risk
+
+{% for r in final.accepted_risks %}
+- {{ r.risk_level }} {{ (r.advisory_id or r.finding_id)|md }} in {{ r.package|md }}: accepted by {{ r.reviewer|md }} on {{ r.decided_at.isoformat() }}: {{ r.note|md }}
+{% else %}
+No risk has been accepted by a reviewer.
+{% endfor %}
+{% if final.escalated %}
+
+### Escalated
+
+{% for r in final.escalated %}
+- {{ (r.advisory_id or r.finding_id)|md }} in {{ r.package|md }} now {{ r.risk_level }}
+{% endfor %}
+{% endif %}
+
+### Audit trail
+
+| When | Event | Actor | Detail |
+|---|---|---|---|
+{% for e in final.audit_trail %}
+| {{ e.at.isoformat() }} | {{ e.kind|replace("_", " ") }} | {{ e.actor|md }} | {{ e.summary|md }} |
 {% endfor %}
 
 ## Agent trace

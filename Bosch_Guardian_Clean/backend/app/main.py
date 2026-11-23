@@ -144,4 +144,9 @@ def scan_report(scan_id: str) -> FileResponse:
     return FileResponse(_artifact(scan_id, "report.html"), media_type="text/html")
 
 
+@app.get("/scan/{scan_id}/report.json")
+def scan_report_json(scan_id: str) -> FileResponse:
+    return FileResponse(_artifact(scan_id, "report.json"), media_type="application/json")
+
+
 app.include_router(review.build_router(_finished))

@@ -71,7 +71,7 @@ details.finding-row > summary { display:flex; flex-wrap:wrap; gap:.4rem .7rem; a
 {% if findings and not relevance_known %}<p class="note">Relevance could not be assessed for any finding: the application source code was not available, so reachability and development-or-production scope are unknown. Findings are ordered by risk level instead.</p>{% endif %}
 </section>
 <nav aria-label="Report sections">
-<a href="#inventory">SBOM</a><a href="#paths">How vulnerabilities enter</a><a href="#vulnerabilities">Ranked by relevance</a><a href="#suspicious">Suspicious packages</a><a href="#ai">AI analysis</a><a href="#fixes">Fix proposals</a><a href="#trace">Agent trace</a><a href="#coverage">Coverage</a><a href="#unknowns">Unknowns</a>
+<a href="#inventory">SBOM</a><a href="#paths">How vulnerabilities enter</a><a href="#vulnerabilities">Ranked by relevance</a><a href="#suspicious">Suspicious packages</a><a href="#ai">AI analysis</a><a href="#fixes">Remediation &amp; validation</a><a href="#trace">Agent trace</a><a href="#coverage">Coverage</a><a href="#unknowns">Unknowns</a>
 </nav>
 <main>
 <section id="inventory"><h2>SBOM and inventory</h2>
@@ -145,12 +145,45 @@ details.finding-row > summary { display:flex; flex-wrap:wrap; gap:.4rem .7rem; a
 </article>{% else %}<p>None recorded.</p>{% endfor %}
 {% endfor %}
 </section>
-<section id="fixes"><h2>Fix proposals (human approval required)</h2>
-<p>Nothing is applied automatically. Each proposal must be approved, then built, tested and rescanned in a sandbox branch.</p>
+<section id="fixes"><h2>Remediation &amp; validation</h2>
+<p>Nothing is applied without a named human approval. An approved fix runs in a sandbox copy: build, tests and a full rescan, compared with the original scan. Machine-readable twin: <code>report.json</code>.</p>
+<h3>Recommended actions</h3>
+{% if final.recommended_actions %}<div class="table"><table><thead><tr><th>Proposal</th><th>Source</th><th>Finding</th><th>Action</th><th>Breaking-change risk</th><th>Status</th></tr></thead><tbody>
+{% for item in final.recommended_actions %}{% set orig = final_findings.get(item.finding_id) %}
+<tr><td><code>{{ item.proposal_id }}</code></td><td>{{ item.source }}</td><td>{{ orig.advisory_id if orig and orig.advisory_id else item.finding_id }} {{ orig.package if orig else "" }}</td><td>{{ item.action|replace("_", " ") }}{% if item.target_version %} to {{ item.target_version }}{% endif %}<br><span class="muted">{{ item.rationale }}</span>{% if item.rejected_reason %}<br><span class="warning">Rejected: {{ item.rejected_reason }}</span>{% endif %}</td><td>{{ item.breaking_change_risk }}</td><td>{{ item.status|replace("_", " ") }}</td></tr>
+{% endfor %}</tbody></table></div>{% else %}<p>No fix proposals were produced.</p>{% endif %}
 {% for claim in fixes %}<article><p><strong>{{ "Proposed" if claim.validated else "Rejected" }}:</strong> {{ claim.text }}</p>
 {% if claim.rejected_reason %}<p>Reason: {{ claim.rejected_reason }}</p>{% endif %}
-{% if claim.uncertainty %}<p>{{ claim.uncertainty }}</p>{% endif %}</article>
-{% else %}<p>No fix proposals (AI review off, failed, or no finding passed validation).</p>{% endfor %}
+{% if claim.uncertainty %}<p>{{ claim.uncertainty }}</p>{% endif %}</article>{% endfor %}
+<h3>Validation results</h3>
+{% for v in final.validations %}{% set orig = final_findings.get(v.finding_id) %}
+<article id="fix-{{ v.proposal_id }}"><h4><code>{{ v.proposal_id }}</code> <span class="tag">{{ v.verdict|replace("_", " ") }}</span>{% if v.confidence %} <span class="tag">final confidence {{ v.confidence }}</span>{% endif %}</h4>
+<p><strong>Original finding:</strong> {{ v.advisory_id or v.finding_id }} in {{ v.package }}{% if orig %}, risk {{ orig.risk_level }}{% endif %}.</p>
+{% if orig and orig.evidence_ids %}{{ evidence_for(orig.evidence_ids) }}{% endif %}
+<p><strong>Action:</strong> {{ v.action|replace("_", " ") }}. <strong>Status:</strong> {{ v.status|replace("_", " ") }}.</p>
+<p><strong>Approval:</strong> {% if v.approved is none %}no decision recorded{% else %}{{ "approved" if v.approved else "rejected" }} by {{ v.reviewer }} at {{ v.decided_at.isoformat() if v.decided_at else "time not recorded" }}{% if v.note %} &mdash; {{ v.note }}{% endif %}{% endif %}.</p>
+<ul><li>Build: {{ v.build_status or "not run" }}{% if v.build_detail %} &mdash; {{ v.build_detail }}{% endif %}</li>
+<li>Tests: {{ (v.tests_status or "not run")|replace("_", " ") }}{% if v.tests_detail %} &mdash; {{ v.tests_detail }}{% endif %}</li></ul>
+{% if v.counts_before %}<div class="table"><table><thead><tr><th>Risk</th>{% for level in ["critical", "high", "medium", "low"] %}<th>{{ level }}</th>{% endfor %}</tr></thead><tbody>
+<tr><td>Before</td>{% for level in ["critical", "high", "medium", "low"] %}<td>{{ v.counts_before.get(level, 0) }}</td>{% endfor %}</tr>
+<tr><td>After</td>{% for level in ["critical", "high", "medium", "low"] %}<td>{{ v.counts_after.get(level, 0) }}</td>{% endfor %}</tr></tbody></table></div>{% endif %}
+<p>Fixed: {% for ref in v.fixed %}{{ ref.advisory_id or ref.finding_id }} ({{ ref.package }} {{ ref.version }}, {{ ref.risk_level }}){% if not loop.last %}, {% endif %}{% else %}none{% endfor %}.</p>
+<p{% if v.introduced %} class="warning"{% endif %}>New findings: {% for ref in v.introduced %}{{ ref.advisory_id or ref.finding_id }} ({{ ref.package }} {{ ref.version }}, {{ ref.risk_level }}){% if not loop.last %}, {% endif %}{% else %}none{% endfor %}.</p>
+{% if v.summary %}<p class="note">{{ v.summary }}</p>{% endif %}
+</article>{% else %}<p>No fix has been approved or run yet.</p>{% endfor %}
+<h3>Remaining risk</h3>
+{% if final.remaining_risks %}<div class="table"><table><thead><tr><th>Risk</th><th>Advisory</th><th>Package</th><th>Origin</th></tr></thead><tbody>
+{% for r in final.remaining_risks %}<tr><td>{{ badge(r.risk_level) }}</td><td><code>{{ r.advisory_id or r.finding_id }}</code></td><td>{{ r.package }}</td><td>{{ r.origin }}</td></tr>
+{% endfor %}</tbody></table></div>{% else %}<p>No open findings remain.</p>{% endif %}
+<h3>Accepted risk</h3>
+{% if final.accepted_risks %}<div class="table"><table><thead><tr><th>Risk</th><th>Advisory</th><th>Package</th><th>Accepted by</th><th>Reason</th><th>When</th></tr></thead><tbody>
+{% for r in final.accepted_risks %}<tr><td>{{ badge(r.risk_level) }}</td><td><code>{{ r.advisory_id or r.finding_id }}</code></td><td>{{ r.package }}</td><td>{{ r.reviewer }}</td><td>{{ r.note }}</td><td>{{ r.decided_at.isoformat() }}</td></tr>
+{% endfor %}</tbody></table></div>{% else %}<p>No risk has been accepted by a reviewer.</p>{% endif %}
+{% if final.escalated %}<h3>Escalated</h3><ul>{% for r in final.escalated %}<li><code>{{ r.advisory_id or r.finding_id }}</code> {{ r.package }} now {{ r.risk_level }}</li>{% endfor %}</ul>{% endif %}
+<h3>Audit trail</h3>
+<div class="table"><table><thead><tr><th>When</th><th>Event</th><th>Actor</th><th>Detail</th></tr></thead><tbody>
+{% for e in final.audit_trail %}<tr><td>{{ e.at.isoformat() }}</td><td>{{ e.kind|replace("_", " ") }}</td><td>{{ e.actor }}</td><td>{{ e.summary }}</td></tr>
+{% endfor %}</tbody></table></div>
 </section>
 <section id="trace"><h2>Agent trace</h2>
 {% if trace %}<div class="table"><table><thead><tr><th>Agent</th><th>Consumed</th><th>Produced</th><th>Accepted</th><th>Rejected</th><th>LLM calls</th><th>Note</th></tr></thead><tbody>
