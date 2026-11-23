@@ -294,7 +294,8 @@ def _materialize_result(
             )
             if record.evidence_id not in finding.evidence_ids:
                 finding.evidence_ids.append(record.evidence_id)
-            staged_records.append(record)
+            if record.evidence_id not in {staged.evidence_id for staged in staged_records}:
+                staged_records.append(record)
 
     raw_root = (context.out / "raw").resolve()
     for relative, content in artifacts.items():

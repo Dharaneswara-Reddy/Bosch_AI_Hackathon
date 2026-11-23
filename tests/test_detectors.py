@@ -553,3 +553,29 @@ def _git(path: Path, *args: str) -> subprocess.CompletedProcess[str]:
         capture_output=True,
         text=True,
     )
+
+
+def test_ci_pin_plugin_handles_the_same_unpinned_action_used_twice(tmp_path: Path) -> None:
+    target = tmp_path / "target"
+    workflows = target / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    (workflows / "ci.yml").write_text(
+        "jobs:\n  a:\n    steps:\n      - uses: actions/checkout@v4\n"
+        "  b:\n    steps:\n      - uses: actions/checkout@v4\n",
+        encoding="utf-8",
+    )
+    out = tmp_path / "run"
+    (out / "raw").mkdir(parents=True)
+    context = SimpleNamespace(
+        target_path=target,
+        sbom=out / "sbom.cdx.json",
+        baseline=None,
+        out=out,
+        result=SimpleNamespace(graph=GraphArtifact()),
+        evidence=EvidenceStore(out),
+    )
+    plugin = next(item for item in DETECTORS["any"] if item.name == "ci_pin")
+
+    result = plugin.run(context)
+
+    assert {f.anomaly_type for f in result.findings} == {"unpinned_ci_action"}
