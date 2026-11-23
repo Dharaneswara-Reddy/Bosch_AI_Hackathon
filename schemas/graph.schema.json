@@ -1,0 +1,120 @@
+{
+  "$defs": {
+    "Component": {
+      "properties": {
+        "component_id": {
+          "title": "Component Id",
+          "type": "string"
+        },
+        "purl": {
+          "title": "Purl",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "version": {
+          "default": "UNKNOWN",
+          "title": "Version",
+          "type": "string"
+        },
+        "ecosystem": {
+          "default": "UNKNOWN",
+          "title": "Ecosystem",
+          "type": "string"
+        },
+        "scope": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Scope"
+            }
+          ],
+          "default": "unknown"
+        },
+        "dev": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dev"
+        },
+        "source_file": {
+          "default": "UNKNOWN",
+          "title": "Source File",
+          "type": "string"
+        }
+      },
+      "required": [
+        "component_id",
+        "purl",
+        "name"
+      ],
+      "title": "Component",
+      "type": "object"
+    },
+    "Edge": {
+      "properties": {
+        "parent_id": {
+          "title": "Parent Id",
+          "type": "string"
+        },
+        "child_id": {
+          "title": "Child Id",
+          "type": "string"
+        },
+        "edge_source": {
+          "$ref": "#/$defs/EdgeSource"
+        }
+      },
+      "required": [
+        "parent_id",
+        "child_id",
+        "edge_source"
+      ],
+      "title": "Edge",
+      "type": "object"
+    },
+    "EdgeSource": {
+      "enum": [
+        "resolver",
+        "sbom"
+      ],
+      "title": "EdgeSource",
+      "type": "string"
+    },
+    "Scope": {
+      "enum": [
+        "direct",
+        "transitive",
+        "unknown"
+      ],
+      "title": "Scope",
+      "type": "string"
+    }
+  },
+  "properties": {
+    "nodes": {
+      "items": {
+        "$ref": "#/$defs/Component"
+      },
+      "title": "Nodes",
+      "type": "array"
+    },
+    "edges": {
+      "items": {
+        "$ref": "#/$defs/Edge"
+      },
+      "title": "Edges",
+      "type": "array"
+    }
+  },
+  "title": "GraphArtifact",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

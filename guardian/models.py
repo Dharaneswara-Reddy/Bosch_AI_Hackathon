@@ -1,14 +1,16 @@
-"""Shared, validated contracts for Guardian's pipeline artifacts."""
+"""Shared data contract. Every stage reads and writes these models.
+
+Owned by P5. Change only by agreement with the whole team.
+"""
 
 import hashlib
 import json
+from datetime import datetime
 from enum import StrEnum
-from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 
 UNKNOWN = "UNKNOWN"
-Unknown = Literal["UNKNOWN"]
 
 
 class ScanStatus(StrEnum):
@@ -17,8 +19,8 @@ class ScanStatus(StrEnum):
     FAILED = "failed"
 
 
-class LLMStatus(StrEnum):
-    COMPLETE = "complete"
+class LlmStatus(StrEnum):
+    OK = "ok"
     UNAVAILABLE = "unavailable"
     FAILED = "failed"
 
@@ -36,10 +38,21 @@ class Scope(StrEnum):
     UNKNOWN = "unknown"
 
 
+class EdgeSource(StrEnum):
+    RESOLVER = "resolver"
+    SBOM = "sbom"
+
+
 class FindingKind(StrEnum):
     VULNERABILITY = "vulnerability"
     MALICIOUS = "malicious"
     ANOMALY = "anomaly"
+
+
+class MatchBasis(StrEnum):
+    PURL = "purl"
+    CPE = "cpe"
+    UNKNOWN = "unknown"
 
 
 class FindingState(StrEnum):
@@ -53,6 +66,7 @@ class RiskLevel(StrEnum):
     HIGH = "high"
     MEDIUM = "medium"
     LOW = "low"
+    UNKNOWN = "unknown"
 
 
 class Confidence(StrEnum):
@@ -61,19 +75,20 @@ class Confidence(StrEnum):
     LOW = "low"
 
 
+class ClaimKind(StrEnum):
+    EVIDENCE = "evidence"
+    INFERENCE = "inference"
+
+
 class CoverageStatus(StrEnum):
     FINDING = "finding"
     PASS = "pass"
-    NA = "n/a"
+    NOT_APPLICABLE = "n/a"
     NOT_COVERED = "not_covered"
     ERROR = "error"
 
 
-class Contract(BaseModel):
-    model_config = ConfigDict(extra="forbid", validate_assignment=True)
-
-
-class ToolRun(Contract):
+class ToolRun(BaseModel):
     tool: str
     command: list[str]
     exit_code: int
@@ -83,112 +98,113 @@ class ToolRun(Contract):
     tool_version: str = UNKNOWN
 
 
-class Scan(Contract):
+class Scan(BaseModel):
     scan_id: str
     target: str
     commit_sha: str = UNKNOWN
     lockfile_hash: str = UNKNOWN
-    resolution: Resolution | Unknown = UNKNOWN
+    resolution: Resolution = Resolution.MANIFEST_ONLY
     scanner_versions: dict[str, str] = Field(default_factory=dict)
     db_built_at: dict[str, str] = Field(default_factory=dict)
-    started_at: str = UNKNOWN
-    ended_at: str = UNKNOWN
+    started_at: datetime
+    ended_at: datetime | None = None
     status: ScanStatus = ScanStatus.PARTIAL
-    llm_status: LLMStatus = LLMStatus.UNAVAILABLE
+    llm_status: LlmStatus = LlmStatus.UNAVAILABLE
     tools: list[ToolRun] = Field(default_factory=list)
     errors: dict[str, str] = Field(default_factory=dict)
     cached_age_minutes: float | None = None
 
 
-class Component(Contract):
+class Component(BaseModel):
     component_id: str
     purl: str
     name: str
     version: str = UNKNOWN
     ecosystem: str = UNKNOWN
     scope: Scope = Scope.UNKNOWN
-    dev: bool | Unknown = UNKNOWN
+    dev: bool | None = None
     source_file: str = UNKNOWN
 
 
-class Edge(Contract):
+class Edge(BaseModel):
     parent_id: str
     child_id: str
-    edge_source: Literal["resolver", "sbom"]
+    edge_source: EdgeSource
 
 
-class Evidence(Contract):
+class Evidence(BaseModel):
     evidence_id: str
     tool: str
-    tool_version: str = UNKNOWN
+    tool_version: str
     file: str
-    pointer: str
+    pointer: str = ""
     sha256: str
     url: str | None = None
-    collected_at: str
+    collected_at: datetime | None = None
     db_built_at: str = UNKNOWN
 
 
-class Finding(Contract):
+class Finding(BaseModel):
     finding_id: str
     kind: FindingKind
-    component_id: str = UNKNOWN
-    advisory_id: str = UNKNOWN
+    component_id: str
+    purl: str
+    advisory_id: str | None = None
     aliases: list[str] = Field(default_factory=list)
-    anomaly_type: str = UNKNOWN
+    anomaly_type: str | None = None
     confirmed_by: list[str] = Field(default_factory=list)
-    source_severity: dict[str, str] | str = UNKNOWN
+    source_severity: str = UNKNOWN
+    severities: dict[str, str] = Field(default_factory=dict)
     fixed_versions: list[str] = Field(default_factory=list)
-    match_basis: Literal["purl", "cpe", "UNKNOWN"] = UNKNOWN
+    match_basis: MatchBasis = MatchBasis.UNKNOWN
     dependency_path: list[str] = Field(default_factory=list)
-    path_count: int | Unknown = UNKNOWN
+    path_count: int | None = None
     evidence_ids: list[str] = Field(default_factory=list)
-    state: FindingState = FindingState.UNDER_INVESTIGATION
-    risk_level: RiskLevel | Unknown = UNKNOWN
-    risk_rule_id: str = UNKNOWN
-    confidence: Confidence | Unknown = UNKNOWN
-    dev: bool | Unknown = UNKNOWN
-    image_tag: str | None = UNKNOWN
+    state: FindingState = FindingState.AFFECTED
+    risk_level: RiskLevel = RiskLevel.UNKNOWN
+    risk_rule_id: str | None = None
+    confidence: Confidence | None = None
+    image_tag: str | None = None
     risk_note: str | None = None
 
 
-class AgentClaim(Contract):
+class AgentClaim(BaseModel):
     claim_id: str
     step: str
     text: str
     evidence_ids: list[str] = Field(default_factory=list)
-    kind: Literal["evidence", "inference"]
+    kind: ClaimKind
     validated: bool = False
     rejected_reason: str | None = None
-    uncertainty: str = UNKNOWN
+    uncertainty: str | None = None
 
 
-class CoverageRow(Contract):
+class CoverageRow(BaseModel):
     detector: str
     ecosystem: str
     status: CoverageStatus
-    reason: str = UNKNOWN
-    components_seen: int = Field(default=0, ge=0)
+    reason: str = ""
+    components_seen: int = 0
 
 
-class GraphArtifact(Contract):
+class GraphArtifact(BaseModel):
     nodes: list[Component] = Field(default_factory=list)
     edges: list[Edge] = Field(default_factory=list)
 
 
-class FindingsArtifact(Contract):
+class FindingsArtifact(BaseModel):
     findings: list[Finding] = Field(default_factory=list)
     evidence: list[Evidence] = Field(default_factory=list)
     claims: list[AgentClaim] = Field(default_factory=list)
 
 
-class EcosystemCoverage(Contract):
+class EcosystemCoverage(BaseModel):
     components: int = Field(ge=0)
     resolver_percent: float = Field(ge=0, le=100)
     scanner_percent: float = Field(ge=0, le=100)
 
 
-class CoverageArtifact(Contract):
+class CoverageArtifact(BaseModel):
     rows: list[CoverageRow] = Field(default_factory=list)
     ecosystems: dict[str, EcosystemCoverage] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
@@ -200,10 +216,6 @@ class RunResult(FindingsArtifact):
     coverage: CoverageArtifact = Field(default_factory=CoverageArtifact)
 
 
-def finding_id(
-    detector: str, purl: str, advisory_or_anomaly: str, dependency_path: list[str]
-) -> str:
-    identity = json.dumps(
-        [detector, purl, advisory_or_anomaly, dependency_path], separators=(",", ":")
-    )
-    return hashlib.sha256(identity.encode("utf-8")).hexdigest()
+def finding_id(detector: str, purl: str, advisory_or_anomaly: str, path: list[str]) -> str:
+    identity = json.dumps([detector, purl, advisory_or_anomaly, path], separators=(",", ":"))
+    return hashlib.sha256(identity.encode()).hexdigest()[:16]
