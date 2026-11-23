@@ -123,6 +123,10 @@ def test_p2_parsers_merge_real_fixture_findings(monkeypatch, tmp_path):
     assert evidence_ids
     assert all(set(finding.evidence_ids) <= evidence_ids for finding in result.findings)
     assert {"grype", "osv"} == set(result.scan.scanner_versions)
+    assert result.scan.db_built_at["grype"] == "2026-11-23T06:28:32Z"
+    grype_evidence = [e for e in result.evidence if e.tool == "grype"]
+    assert grype_evidence and {e.db_built_at for e in grype_evidence} == {"2026-11-23T06:28:32Z"}
+    assert result.scan.db_built_at["osv"].startswith("live api.osv.dev")
     assert (output / "report.html").is_file()
 
 def test_cache_reuses_clean_checkout_and_invalidates_changed_lockfile(monkeypatch, tmp_path):
