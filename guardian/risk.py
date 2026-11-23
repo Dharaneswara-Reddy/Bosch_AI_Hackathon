@@ -36,7 +36,10 @@ DECISION_RULE = {
 }
 LEVEL_DECISION = {level: decision for decision, level in DECISION_LEVEL.items()}
 SEVERITY_BASE = {
-    RiskLevel.CRITICAL: 9.5, RiskLevel.HIGH: 8.0, RiskLevel.MEDIUM: 5.5, RiskLevel.LOW: 2.5,
+    RiskLevel.CRITICAL: 9.5,
+    RiskLevel.HIGH: 8.0,
+    RiskLevel.MEDIUM: 5.5,
+    RiskLevel.LOW: 2.5,
 }
 IMPACT_METRICS = ("C", "I", "A", "VC", "VI", "VA")
 EXPLOIT_LIKELY_ANOMALIES = {"install_script_change", "unverified_install_script"}
@@ -103,7 +106,9 @@ def _impact(vector: str | None, severity: RiskLevel | None) -> TechnicalImpact:
     return TechnicalImpact.TOTAL if high else TechnicalImpact.PARTIAL
 
 
-def _decide(exploit: Exploitation, exposure: Exposure, impact: TechnicalImpact) -> SsvcDecision:
+def _decide(
+    exploit: Exploitation, exposure: Exposure, impact: TechnicalImpact, automatable: Automatable
+) -> SsvcDecision:
     production = exposure != Exposure.SMALL
     total = impact == TechnicalImpact.TOTAL
     if exploit == Exploitation.ACTIVE:
@@ -111,7 +116,12 @@ def _decide(exploit: Exploitation, exposure: Exposure, impact: TechnicalImpact) 
     if exploit == Exploitation.LIKELY:
         return SsvcDecision.ATTEND if production and total else SsvcDecision.TRACK_STAR
     if exploit == Exploitation.NONE:
-        return SsvcDecision.TRACK_STAR if production and total else SsvcDecision.TRACK
+        if production and total:
+            # CISA SSVC: automatable + total impact warrants Attend even with no exploitation seen.
+            return (
+                SsvcDecision.ATTEND if automatable == Automatable.YES else SsvcDecision.TRACK_STAR
+            )
+        return SsvcDecision.TRACK
     if production:
         return SsvcDecision.ATTEND if total else SsvcDecision.TRACK_STAR
     return SsvcDecision.TRACK_STAR if total else SsvcDecision.TRACK
@@ -144,9 +154,11 @@ def _vuln_reasons(
     if f.known_exploited:
         reasons.append("in CISA KEV")
     if f.epss is not None:
-        pct = f" ({_ordinal(round((f.epss_percentile or 0) * 100))} percentile)" if (
-            f.epss_percentile is not None
-        ) else ""
+        pct = (
+            f" ({_ordinal(round((f.epss_percentile or 0) * 100))} percentile)"
+            if (f.epss_percentile is not None)
+            else ""
+        )
         reasons.append(f"EPSS {f.epss:.2f}{pct}")
     if f.epss is None and not f.known_exploited:
         reasons.append("no exploitation data available (treated conservatively)")
@@ -166,27 +178,36 @@ def _vulnerability(f: Finding, dev: bool | None, policy: RiskPolicy) -> dict[str
     exploit = _exploitation(f, policy)
     exposure = _exposure(f, dev)
     impact = _impact(f.cvss_vector, severity)
-    decision = _decide(exploit, exposure, impact)
+    automatable = _automatable(f.cvss_vector)
+    decision = _decide(exploit, exposure, impact, automatable)
     base = f.cvss_score or SEVERITY_BASE.get(severity or RiskLevel.MEDIUM, 5.5)
     percentile = 1.0 if exploit == Exploitation.ACTIVE else f.epss_percentile
-    automatable = _automatable(f.cvss_vector)
     signals = _Signals(exposure, automatable, impact)
     state = FindingState.AFFECTED if severity or f.cvss_vector else FindingState.UNDER_INVESTIGATION
     return {
-        "exploitation": exploit, "exposure": exposure, "automatable": automatable,
-        "technical_impact": impact, "ssvc_decision": decision,
+        "exploitation": exploit,
+        "exposure": exposure,
+        "automatable": automatable,
+        "technical_impact": impact,
+        "ssvc_decision": decision,
         "risk_score": _score(base, percentile, exposure, policy),
-        "risk_reasons": _vuln_reasons(f, severity, dev, signals), "state": state,
-        "risk_rule_id": DECISION_RULE[decision], "risk_level": DECISION_LEVEL[decision],
+        "risk_reasons": _vuln_reasons(f, severity, dev, signals),
+        "state": state,
+        "risk_rule_id": DECISION_RULE[decision],
+        "risk_level": DECISION_LEVEL[decision],
     }
 
 
 def _malicious(dev: bool | None) -> dict[str, object]:
     return {
-        "exploitation": Exploitation.ACTIVE, "exposure": _exposure_for_scope(dev),
-        "ssvc_decision": SsvcDecision.ACT, "risk_score": 100, "state": FindingState.AFFECTED,
+        "exploitation": Exploitation.ACTIVE,
+        "exposure": _exposure_for_scope(dev),
+        "ssvc_decision": SsvcDecision.ACT,
+        "risk_score": 100,
+        "state": FindingState.AFFECTED,
         "risk_reasons": ["known malicious package", _scope_reason(dev)],
-        "risk_rule_id": "R-MAL", "risk_level": RiskLevel.CRITICAL,
+        "risk_rule_id": "R-MAL",
+        "risk_level": RiskLevel.CRITICAL,
     }
 
 
@@ -214,11 +235,17 @@ def _anomaly(f: Finding, dev: bool | None, policy: RiskPolicy) -> dict[str, obje
         Exploitation.LIKELY if f.anomaly_type in EXPLOIT_LIKELY_ANOMALIES else Exploitation.UNKNOWN
     )
     return {
-        "exploitation": exploit, "exposure": exposure, "ssvc_decision": LEVEL_DECISION[level],
+        "exploitation": exploit,
+        "exposure": exposure,
+        "ssvc_decision": LEVEL_DECISION[level],
         "risk_score": _score(SEVERITY_BASE[level], None, exposure, policy),
-        "risk_reasons": [ANOMALY_REASONS.get(str(f.anomaly_type), "supply-chain anomaly"),
-                         _scope_reason(dev)],
-        "state": FindingState.UNDER_INVESTIGATION, "risk_rule_id": rule, "risk_level": level,
+        "risk_reasons": [
+            ANOMALY_REASONS.get(str(f.anomaly_type), "supply-chain anomaly"),
+            _scope_reason(dev),
+        ],
+        "state": FindingState.UNDER_INVESTIGATION,
+        "risk_rule_id": rule,
+        "risk_level": level,
     }
 
 

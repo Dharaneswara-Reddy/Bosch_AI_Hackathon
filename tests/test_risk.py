@@ -20,8 +20,13 @@ LOCAL = "CVSS:3.1/AV:L/AC:L/PR:L/UI:R/S:U/C:L/I:L/A:N"
 
 def vuln(severity: str = "Medium", **extra: object) -> Finding:
     return Finding(
-        finding_id="x", component_id="lib", purl="pkg:npm/lib@1", kind="vulnerability",
-        source_severity=severity, severities={"grype": severity}, **extra,
+        finding_id="x",
+        component_id="lib",
+        purl="pkg:npm/lib@1",
+        kind="vulnerability",
+        source_severity=severity,
+        severities={"grype": severity},
+        **extra,
     )
 
 
@@ -35,6 +40,18 @@ def test_cvss_medium_in_kev_in_production_is_critical() -> None:
     assert "production dependency" in result.risk_reasons
 
 
+def test_automatable_total_impact_in_production_attends_without_exploitation() -> None:
+    remote = vuln("Critical", epss=0.001, epss_percentile=0.2, cvss_vector=NETWORK)
+    assert assess(remote, dev=False, policy=POLICY).ssvc_decision == SsvcDecision.ATTEND
+    local = vuln(
+        "High",
+        epss=0.001,
+        epss_percentile=0.2,
+        cvss_vector="CVSS:3.1/AV:L/AC:L/PR:L/UI:R/S:U/C:H/I:H/A:H",
+    )
+    assert assess(local, dev=False, policy=POLICY).ssvc_decision == SsvcDecision.TRACK_STAR
+
+
 def test_cvss_critical_without_exploitation_in_dev_is_not_critical() -> None:
     finding = vuln("Critical", epss=0.001, epss_percentile=0.2, cvss_vector=NETWORK)
     result = assess(finding, dev=True, policy=POLICY)
@@ -42,7 +59,6 @@ def test_cvss_critical_without_exploitation_in_dev_is_not_critical() -> None:
     assert result.exposure == Exposure.SMALL
     assert result.risk_level in {"low", "medium"}
     assert result.ssvc_decision == SsvcDecision.TRACK
-
 
     """Missing data is not safety: unknown exploit data and scope keep the old R-CVE-U medium."""
     """Missing data is not safety: unknown exploit data and scope keep the old R-CVE-U medium."""
@@ -59,12 +75,15 @@ def test_unknown_exploitation_with_total_impact_in_production_is_high() -> None:
     assert (result.ssvc_decision, result.risk_level) == (SsvcDecision.ATTEND, "high")
 
 
-@pytest.mark.parametrize("epss, percentile, expected", [
-    (0.1, 0.5, Exploitation.LIKELY),
-    (0.05, 0.95, Exploitation.LIKELY),
-    (0.05, 0.5, Exploitation.NONE),
-    (None, None, Exploitation.UNKNOWN),
-])
+@pytest.mark.parametrize(
+    "epss, percentile, expected",
+    [
+        (0.1, 0.5, Exploitation.LIKELY),
+        (0.05, 0.95, Exploitation.LIKELY),
+        (0.05, 0.5, Exploitation.NONE),
+        (None, None, Exploitation.UNKNOWN),
+    ],
+)
 def test_exploitation_thresholds(epss, percentile, expected) -> None:
     result = assess(vuln(epss=epss, epss_percentile=percentile), dev=False, policy=POLICY)
     assert result.exploitation == expected
@@ -85,17 +104,21 @@ def test_likely_partial_impact_is_track_star() -> None:
     finding = vuln("Low", epss=0.5, epss_percentile=0.99, cvss_vector=LOCAL)
     result = assess(finding, dev=False, policy=POLICY)
     assert (result.ssvc_decision, result.risk_rule_id) == (
-        SsvcDecision.TRACK_STAR, "SSVC-TRACK-STAR",
+        SsvcDecision.TRACK_STAR,
+        "SSVC-TRACK-STAR",
     )
 
 
-@pytest.mark.parametrize("vector, expected", [
-    (NETWORK, Automatable.YES),
-    (LOCAL, Automatable.NO),
-    ("CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:L/I:L/A:L", Automatable.NO),
-    ("CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:L/VI:L/VA:L", Automatable.YES),
-    (None, Automatable.UNKNOWN),
-])
+@pytest.mark.parametrize(
+    "vector, expected",
+    [
+        (NETWORK, Automatable.YES),
+        (LOCAL, Automatable.NO),
+        ("CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:L/I:L/A:L", Automatable.NO),
+        ("CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:L/VI:L/VA:L", Automatable.YES),
+        (None, Automatable.UNKNOWN),
+    ],
+)
 def test_automatable_from_cvss_vector(vector, expected) -> None:
     assert assess(vuln(cvss_vector=vector), dev=False, policy=POLICY).automatable == expected
 
@@ -122,7 +145,10 @@ def test_score_orders_exploited_exposed_above_unexploited_dev() -> None:
 
 def test_malicious_package_is_always_act() -> None:
     finding = Finding(
-        finding_id="x", component_id="lib", purl="pkg:npm/lib@1", kind="malicious",
+        finding_id="x",
+        component_id="lib",
+        purl="pkg:npm/lib@1",
+        kind="malicious",
     )
     result = assess(finding, dev=True, policy=POLICY)
     assert (result.risk_rule_id, result.risk_level) == ("R-MAL", "critical")
@@ -130,18 +156,31 @@ def test_malicious_package_is_always_act() -> None:
     assert result.risk_reasons
 
 
-@pytest.mark.parametrize("anomaly, tag, rule, level, decision", [
-    ("suspected_typosquat", None, "R-AN-1", "high", SsvcDecision.ATTEND),
-    ("unpinned_base_image", "latest", "R-AN-2", "medium", SsvcDecision.TRACK_STAR),
-    ("unpinned_base_image", "3", "R-AN-3", "low", SsvcDecision.TRACK),
-])
+@pytest.mark.parametrize(
+    "anomaly, tag, rule, level, decision",
+    [
+        ("suspected_typosquat", None, "R-AN-1", "high", SsvcDecision.ATTEND),
+        ("unpinned_base_image", "latest", "R-AN-2", "medium", SsvcDecision.TRACK_STAR),
+        ("unpinned_base_image", "3", "R-AN-3", "low", SsvcDecision.TRACK),
+    ],
+)
 def test_anomalies_keep_their_levels_with_consistent_decision(anomaly, tag, rule, level, decision):
-    finding = assess(Finding(
-        finding_id="x", component_id="lib", purl="pkg:npm/lib@1", kind="anomaly",
-        anomaly_type=anomaly, image_tag=tag,
-    ), dev=None, policy=POLICY)
+    finding = assess(
+        Finding(
+            finding_id="x",
+            component_id="lib",
+            purl="pkg:npm/lib@1",
+            kind="anomaly",
+            anomaly_type=anomaly,
+            image_tag=tag,
+        ),
+        dev=None,
+        policy=POLICY,
+    )
     assert (finding.risk_rule_id, finding.risk_level, finding.ssvc_decision) == (
-        rule, level, decision,
+        rule,
+        level,
+        decision,
     )
     assert finding.risk_reasons
     assert finding.state == "under_investigation"
@@ -149,7 +188,10 @@ def test_anomalies_keep_their_levels_with_consistent_decision(anomaly, tag, rule
 
 def test_unknown_anomaly_type_is_rejected() -> None:
     finding = Finding(
-        finding_id="x", component_id="lib", purl="pkg:npm/lib@1", kind="anomaly",
+        finding_id="x",
+        component_id="lib",
+        purl="pkg:npm/lib@1",
+        kind="anomaly",
         anomaly_type="odd",
     )
     with pytest.raises(ValueError, match="odd"):
