@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from guardian.ai.review import load_injected, review_context_from_result, run_review
 from guardian.config import Settings
 from guardian.models import LlmStatus, RunResult, Scan
@@ -66,3 +68,47 @@ def test_single_claim_object_is_accepted(tmp_path: Path) -> None:
     )
     claims, _, _ = run_review(_result(), Settings(), load_injected(path, _result()))
     assert [c.validated for c in claims] == [True]
+
+
+def test_review_options_default_to_the_documented_policy() -> None:
+    from guardian.ai.review import review_options
+
+    assert review_options({}) == {
+        "min_risk": "medium",
+        "max_groups": 200,
+        "pack_batch": 5,
+        "concurrency": 4,
+    }
+
+
+def test_review_options_read_the_environment() -> None:
+    from guardian.ai.review import review_options
+
+    env = {
+        "GUARDIAN_AI_MIN_RISK": " High ",
+        "GUARDIAN_AI_MAX_GROUPS": "50",
+        "GUARDIAN_LLM_PACK_BATCH": "3",
+        "GUARDIAN_LLM_CONCURRENCY": "2",
+    }
+    assert review_options(env) == {
+        "min_risk": "high",
+        "max_groups": 50,
+        "pack_batch": 3,
+        "concurrency": 2,
+    }
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("GUARDIAN_AI_MIN_RISK", "severe"),
+        ("GUARDIAN_AI_MAX_GROUPS", "0"),
+        ("GUARDIAN_LLM_CONCURRENCY", "0"),
+        ("GUARDIAN_LLM_PACK_BATCH", "many"),
+    ],
+)
+def test_review_options_reject_bad_values_naming_the_variable(name: str, value: str) -> None:
+    from guardian.ai.review import review_options
+
+    with pytest.raises(ValueError, match=name):
+        review_options({name: value})

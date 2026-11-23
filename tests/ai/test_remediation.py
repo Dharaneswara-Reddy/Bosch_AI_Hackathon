@@ -11,7 +11,7 @@ from tests.ai.factories import make_context
 
 def _setup() -> tuple[Any, Any, Any]:
     ctx = make_context()
-    packs = {p.finding_id: p for p in triage(ctx, 20)}
+    packs = {p.finding_id: p for p in triage(ctx, "low", 200)[1]}
     candidates = {f: build_candidate(p) for f, p in packs.items()}
     return ctx, packs, candidates
 

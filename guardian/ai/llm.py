@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import re
 import socket
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -329,8 +330,15 @@ class FallbackClient:
         self._providers = providers
         self.skipped = skipped
         self.failed: dict[str, str] = {}
-        self.last_used: str | None = None
+        self._lock = threading.Lock()
+        self._local = threading.local()
         self.name = "→".join(label.split(":")[0] for label, _ in providers)
+
+    @property
+    def last_used(self) -> str | None:
+        """The provider that answered this thread's latest call (calls run in parallel)."""
+        value: str | None = getattr(self._local, "last_used", None)
+        return value
 
     @property
     def labels(self) -> list[str]:
@@ -338,18 +346,21 @@ class FallbackClient:
 
     def complete(self, system: str, user: str, schema: JsonObject, timeout: float) -> JsonObject:
         for label, client in self._providers:
-            if label in self.failed:
-                continue
+            with self._lock:
+                if label in self.failed:
+                    continue
             try:
                 result = client.complete(system, user, schema, timeout)
             except (LLMBadResponse, LLMUnavailable):
                 raise
             except LLMError as exc:
-                self.failed[label] = f"{type(exc).__name__}: {exc}"
+                with self._lock:
+                    self.failed.setdefault(label, f"{type(exc).__name__}: {exc}")
                 continue
-            self.last_used = label
+            self._local.last_used = label
             return result
-        reasons = "; ".join(f"{label}: {reason}" for label, reason in self.failed.items())
+        with self._lock:
+            reasons = "; ".join(f"{label}: {reason}" for label, reason in self.failed.items())
         raise LLMError(f"All LLM providers failed. {reasons}")
 
 

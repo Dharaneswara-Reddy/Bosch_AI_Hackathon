@@ -78,23 +78,17 @@ def _full_llm() -> RoutingLLM:
     )
 
 
-def test_agents_run_in_order_and_hand_off_evidence() -> None:
+def test_branches_run_in_parallel_then_the_tail_runs_once_in_order() -> None:
     llm = _full_llm()
     result = run_ai_review(make_context(), llm)
     assert result.llm_status == LlmStatus.OK
-    assert llm.agents_called() == [
-        "vuln_analyst",
-        "change_analyst",
-        "risk_critic",
-        "remediation_planner",
-        "report_writer",
-    ]
+    called = llm.agents_called()
+    assert sorted(called[:4]) == ["change_analyst", "risk_analyst", "risk_analyst", "vuln_analyst"]
+    assert called[4:] == ["risk_critic", "remediation_planner", "report_writer"]
     agents = [t.agent for t in result.trace]
-    assert agents == [
-        "triage",
-        "relevance",
-        "vuln_analyst",
-        "change_analyst",
+    assert agents[:2] == ["triage", "relevance"]
+    assert sorted(agents[2:6]) == ["change_analyst", "risk_analyst", "risk_analyst", "vuln_analyst"]
+    assert agents[6:] == [
         "evidence_validator",
         "risk_critic",
         "remediation_candidates",
@@ -102,7 +96,8 @@ def test_agents_run_in_order_and_hand_off_evidence() -> None:
         "report_writer",
     ]
     assert result.trace[0].produced == ["pack-f-jwt", "pack-f-leftpad"]
-    assert "pack-f-jwt" in result.trace[2].consumed
+    vuln = next(t for t in result.trace if t.agent == "vuln_analyst")
+    assert vuln.consumed == ["pack-f-jwt"]
 
 
 def test_analysts_only_see_their_own_evidence_packs() -> None:
@@ -219,6 +214,7 @@ def test_graph_diagram_lists_every_agent() -> None:
         "relevance",
         "vuln_analyst",
         "change_analyst",
+        "risk_analyst",
         "evidence_validator",
         "analyst_revision",
         "risk_critic",
