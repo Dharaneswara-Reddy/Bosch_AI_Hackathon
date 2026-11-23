@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from guardian.detectors._common import DetectionResult, coverage_rows, sha256_bytes
-from guardian.models import Evidence
+from guardian.models import CoverageStatus, Evidence
 
 _LOCKFILES = {
     "package-lock.json",
@@ -89,7 +89,11 @@ def detect(
     if not baseline_commit:
         return DetectionResult(
             coverage=coverage_rows(
-                "git_diff", known_ecosystems, "n/a", "No baseline commit", counts
+                "git_diff",
+                known_ecosystems,
+                CoverageStatus.NOT_APPLICABLE,
+                "No baseline commit",
+                counts,
             )
         )
     name_result = _git(
@@ -98,7 +102,11 @@ def detect(
     if name_result.returncode != 0:
         return DetectionResult(
             coverage=coverage_rows(
-                "git_diff", known_ecosystems, "error", name_result.stderr.strip(), counts
+                "git_diff",
+                known_ecosystems,
+                CoverageStatus.ERROR,
+                name_result.stderr.strip(),
+                counts,
             )
         )
     evidence: list[Evidence] = []
@@ -120,8 +128,7 @@ def detect(
         patch_bytes = patch.encode("utf-8")
         artifact_file = f"raw/git-diff/{path}.patch"
         pointer = (
-            f"target_file={path};{_line_pointer(patch)};"
-            f"old_sha256={old_hash};new_sha256={new_hash}"
+            f"target_file={path};{_line_pointer(patch)};old_sha256={old_hash};new_sha256={new_hash}"
         )
         evidence_id = hashlib.sha256(
             f"git_diff\0{artifact_file}\0{pointer}\0{sha256_bytes(patch_bytes)}".encode()
@@ -138,7 +145,7 @@ def detect(
             )
         )
         artifacts[artifact_file] = patch_bytes
-    status = "finding" if evidence else "pass"
+    status = CoverageStatus.FINDING if evidence else CoverageStatus.PASS
     return DetectionResult(
         evidence=evidence,
         coverage=coverage_rows("git_diff", known_ecosystems, status, "", counts),

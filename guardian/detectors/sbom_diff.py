@@ -16,6 +16,7 @@ from guardian.detectors._common import (
     purl_of,
     read_value,
 )
+from guardian.models import CoverageStatus
 
 
 def detect(current_sbom: Any, baseline_sbom: Any | None) -> DetectionResult:
@@ -27,7 +28,9 @@ def detect(current_sbom: Any, baseline_sbom: Any | None) -> DetectionResult:
     }
     if baseline_sbom is None:
         return DetectionResult(
-            coverage=coverage_rows("sbom_diff", ecosystems, "n/a", "No baseline SBOM", counts)
+            coverage=coverage_rows(
+                "sbom_diff", ecosystems, CoverageStatus.NOT_APPLICABLE, "No baseline SBOM", counts
+            )
         )
 
     baseline = components_from(baseline_sbom)
@@ -68,7 +71,7 @@ def detect(current_sbom: Any, baseline_sbom: Any | None) -> DetectionResult:
         )
         findings.append(finding)
         finding_details[finding.finding_id] = details
-    status = "finding" if findings else "pass"
+    status = CoverageStatus.FINDING if findings else CoverageStatus.PASS
     return DetectionResult(
         findings=findings,
         evidence=evidence,

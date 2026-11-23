@@ -13,6 +13,7 @@ from guardian.detectors._common import (
     evidence_record,
     finding_payload,
 )
+from guardian.models import CoverageStatus
 
 _USES = re.compile(r"^\s*(?:-\s*)?uses:\s*(?P<value>[^\s#]+)", re.IGNORECASE)
 _FULL_SHA = re.compile(r"^[0-9a-fA-F]{40}$")
@@ -80,7 +81,11 @@ def detect(target_path: Path, *, ecosystems: list[str] | None = None) -> Detecti
         findings=findings,
         evidence=evidence,
         coverage=coverage_rows(
-            "ci_pin", known_ecosystems, "finding" if findings else "pass", "", counts
+            "ci_pin",
+            known_ecosystems,
+            CoverageStatus.FINDING if findings else CoverageStatus.PASS,
+            "",
+            counts,
         ),
         finding_details=finding_details,
     )

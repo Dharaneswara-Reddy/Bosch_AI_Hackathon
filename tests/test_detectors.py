@@ -13,7 +13,14 @@ from guardian.detectors.install_script import detect as detect_install_scripts
 from guardian.detectors.sbom_diff import detect as detect_sbom_diff
 from guardian.detectors.typosquat import detect as detect_typosquats
 from guardian.evidence import EvidenceStore
-from guardian.models import Component, GraphArtifact
+from guardian.models import (
+    Component,
+    CoverageStatus,
+    Edge,
+    EdgeSource,
+    FindingKind,
+    GraphArtifact,
+)
 
 
 def _component(name: str, version: str, *, scope: str = "transitive") -> dict[str, str]:
@@ -196,8 +203,7 @@ def test_install_script_detects_only_new_or_changed_npm_entries(tmp_path: Path) 
     result = detect_install_scripts(path, baseline_lockfile=baseline, ecosystems=["npm"])
 
     assert {
-        _finding_details(result, finding)["package_name"]
-        for finding in _result_findings(result)
+        _finding_details(result, finding)["package_name"] for finding in _result_findings(result)
     } == {"pkg", "new"}
     assert all(f["anomaly_type"] == "install_script_change" for f in _result_findings(result))
     assert _result_coverage(result)[0]["status"] == "finding"
@@ -306,17 +312,19 @@ def test_registry_covers_each_detector_for_any_and_npm() -> None:
 def test_registry_plugin_matches_runner_interface_and_records_evidence(tmp_path: Path) -> None:
     target = tmp_path / "target"
     target.mkdir()
+    (target / "package.json").write_text(
+        '{\n  "dependencies": {\n    "lodahs": "^1.0.0"\n  }\n}\n', encoding="utf-8"
+    )
     out = tmp_path / "run"
     (out / "raw").mkdir(parents=True)
     sbom = {
         "components": [
             {
-                "component_id": "pkg:npm/ngy-cookie@1.0.0",
-                "purl": "pkg:npm/ngy-cookie@1.0.0",
-                "name": "ngy-cookie",
+                "component_id": "pkg:npm/lodahs@1.0.0",
+                "purl": "pkg:npm/lodahs@1.0.0",
+                "name": "lodahs",
                 "version": "1.0.0",
                 "ecosystem": "npm",
-                "scope": "direct",
             }
         ]
     }
@@ -325,12 +333,11 @@ def test_registry_plugin_matches_runner_interface_and_records_evidence(tmp_path:
     graph = GraphArtifact(
         nodes=[
             Component(
-                component_id="pkg:npm/ngy-cookie@1.0.0",
-                purl="pkg:npm/ngy-cookie@1.0.0",
-                name="ngy-cookie",
+                component_id="pkg:npm/lodahs@1.0.0",
+                purl="pkg:npm/lodahs@1.0.0",
+                name="lodahs",
                 version="1.0.0",
                 ecosystem="npm",
-                scope="direct",
             )
         ]
     )
@@ -351,6 +358,191 @@ def test_registry_plugin_matches_runner_interface_and_records_evidence(tmp_path:
     records = context.evidence.records()
     assert {record.evidence_id for record in records} >= set(result.findings[0].evidence_ids)
     assert all((out / record.file).is_file() for record in records)
+
+
+def _write_manifest(
+    path: Path, dependencies: dict[str, str], section: str = "dependencies"
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    body = ",\n".join(f'    "{name}": "{spec}"' for name, spec in dependencies.items())
+    path.write_text(
+        f'{{\n  "name": "demo",\n  "{section}": {{\n{body}\n  }}\n}}\n', encoding="utf-8"
+    )
+
+
+def _typosquat_inputs(tmp_path: Path) -> tuple[Path, Path]:
+    popular = tmp_path / "popular.txt"
+    allowlist = tmp_path / "allowlist.txt"
+    popular.write_text("# test snapshot\nngx-cookie\nreact\nlodash\n", encoding="utf-8")
+    allowlist.write_text("# none\n", encoding="utf-8")
+    return popular, allowlist
+
+
+def test_typosquat_uses_manifests_when_sbom_has_no_scope(tmp_path: Path) -> None:
+    popular, allowlist = _typosquat_inputs(tmp_path)
+    target = tmp_path / "repo"
+    _write_manifest(target / "package.json", {"react": "^18.0.0"})
+    _write_manifest(
+        target / "frontend" / "package.json",
+        {"@angular/core": "^17.0.0", "ngy-cookie": "^6.0.0"},
+        section="devDependencies",
+    )
+    _write_manifest(target / "node_modules" / "evil" / "package.json", {"lodahs": "1.0.0"})
+    sbom = {
+        "components": [
+            {k: v for k, v in _component(n, ver).items() if k != "scope"}
+            for n, ver in [("ngy-cookie", "6.0.1"), ("react", "18.2.0"), ("lodahs", "1.0.0")]
+        ]
+    }
+
+    result = detect_typosquats(
+        sbom, target_path=target, popular_path=popular, allowlist_path=allowlist
+    )
+
+    findings = _result_findings(result)
+    assert [f["purl"] for f in findings] == ["pkg:npm/ngy-cookie@6.0.1"]
+    details = _finding_details(result, findings[0])
+    assert details["nearest_popular_name"] == "ngx-cookie"
+    assert details["distance"] == 1
+    assert details["manifest_file"] == "frontend/package.json"
+    assert details["manifest_line"] == 5
+    record = next(r for r in result.evidence if r.evidence_id in findings[0]["evidence_ids"])
+    assert (record.file, record.pointer) == ("frontend/package.json", "lines:5-5")
+    assert _result_coverage(result)[0]["status"] == "finding"
+
+
+def test_typosquat_ignores_transitive_only_and_short_names(tmp_path: Path) -> None:
+    popular, allowlist = _typosquat_inputs(tmp_path)
+    popular.write_text("ngx-cookie\ncors\n", encoding="utf-8")
+    target = tmp_path / "repo"
+    _write_manifest(target / "package.json", {"cores": "1.0.0", "@types/ngy-cookie": "1.0.0"})
+    sbom = {"components": [_component("ngy-cookie", "1.0.0"), _component("cores", "1.0.0")]}
+
+    result = detect_typosquats(
+        sbom, target_path=target, popular_path=popular, allowlist_path=allowlist
+    )
+
+    assert _result_findings(result) == []
+    assert _result_coverage(result)[0]["status"] == "pass"
+
+
+def test_typosquat_scoped_short_names_use_suffix_length_for_threshold(tmp_path: Path) -> None:
+    popular, allowlist = _typosquat_inputs(tmp_path)
+    popular.write_text("@types/ws\n@types/pg\n", encoding="utf-8")
+    target = tmp_path / "repo"
+    _write_manifest(target / "package.json", {"@types/jws": "1.0.0", "@types/pug": "1.0.0"})
+
+    result = detect_typosquats(
+        {"components": []}, target_path=target, popular_path=popular, allowlist_path=allowlist
+    )
+
+    assert _result_findings(result) == []
+
+
+def test_typosquat_checks_scoped_manifest_name_by_suffix(tmp_path: Path) -> None:
+    popular, allowlist = _typosquat_inputs(tmp_path)
+    target = tmp_path / "repo"
+    _write_manifest(target / "package.json", {"@team/ngy-cookie": "1.0.0"})
+
+    result = detect_typosquats(
+        {"components": []}, target_path=target, popular_path=popular, allowlist_path=allowlist
+    )
+
+    findings = _result_findings(result)
+    assert len(findings) == 1
+    assert _finding_details(result, findings[0])["package_name"] == "@team/ngy-cookie"
+    assert findings[0]["purl"].startswith("pkg:npm/%40team/ngy-cookie")
+
+
+def test_typosquat_falls_back_to_graph_children_of_root(tmp_path: Path) -> None:
+    popular, allowlist = _typosquat_inputs(tmp_path)
+
+    def node(name: str) -> Component:
+        return Component(
+            component_id=name,
+            purl=f"pkg:npm/{name}@1.0.0",
+            name=name,
+            version="1.0.0",
+            ecosystem="npm",
+        )
+
+    graph = GraphArtifact(
+        nodes=[node("app"), node("ngy-cookie"), node("lodahs")],
+        edges=[
+            Edge(parent_id="app", child_id="ngy-cookie", edge_source=EdgeSource.SBOM),
+            Edge(parent_id="ngy-cookie", child_id="lodahs", edge_source=EdgeSource.SBOM),
+        ],
+    )
+    sbom = {"components": [_component("ngy-cookie", "1.0.0"), _component("lodahs", "1.0.0")]}
+
+    result = detect_typosquats(sbom, graph=graph, popular_path=popular, allowlist_path=allowlist)
+
+    assert [f["purl"] for f in _result_findings(result)] == ["pkg:npm/ngy-cookie@1.0.0"]
+
+
+def test_typosquat_reports_unparseable_manifest_in_coverage(tmp_path: Path) -> None:
+    popular, allowlist = _typosquat_inputs(tmp_path)
+    target = tmp_path / "repo"
+    target.mkdir()
+    (target / "package.json").write_text("{not json", encoding="utf-8")
+
+    result = detect_typosquats(
+        {"components": [_component("react", "1.0.0")]},
+        target_path=target,
+        popular_path=popular,
+        allowlist_path=allowlist,
+    )
+
+    row = _result_coverage(result)[0]
+    assert "package.json" in str(row["reason"])
+
+
+def test_popular_snapshot_is_sourced_and_not_hand_picked() -> None:
+    path = Path(__file__).resolve().parents[1] / "data" / "popular" / "npm.txt"
+    lines = path.read_text(encoding="utf-8").splitlines()
+    header = [line for line in lines if line.startswith("#")]
+    names = [line for line in lines if line and not line.startswith("#")]
+
+    assert any("https://registry.npmjs.org/npm-high-impact" in line for line in header)
+    assert any("2026-11-23" in line for line in header)
+    assert 1000 <= len(names) <= 5000
+    assert "ngx-cookie" not in names
+
+
+def test_image_pin_records_tag_on_finding(tmp_path: Path) -> None:
+    (tmp_path / "Dockerfile").write_text(
+        "FROM python:3.11\nFROM node\nFROM registry:5000/team/app:latest\n", encoding="utf-8"
+    )
+
+    result = detect_image_pins(tmp_path, ecosystems=["npm"])
+
+    tags = {_finding_details(result, f)["image"]: f["image_tag"] for f in _result_findings(result)}
+    assert tags == {"python:3.11": "3.11", "node": None, "registry:5000/team/app:latest": "latest"}
+
+
+def test_finding_and_coverage_use_model_enums(tmp_path: Path) -> None:
+    (tmp_path / "Dockerfile").write_text("FROM python:3.11\n", encoding="utf-8")
+
+    result = detect_image_pins(tmp_path, ecosystems=["npm"])
+
+    assert result.findings[0].kind is FindingKind.ANOMALY
+    assert result.coverage[0].status is CoverageStatus.FINDING
+
+
+def test_git_diff_emits_evidence_without_findings(tmp_path: Path) -> None:
+    _git(tmp_path, "init")
+    _git(tmp_path, "config", "user.email", "t@example.com")
+    _git(tmp_path, "config", "user.name", "T")
+    (tmp_path / "package.json").write_text('{"dependencies": {}}\n', encoding="utf-8")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-m", "base")
+    base = _git(tmp_path, "rev-parse", "HEAD").stdout.strip()
+    (tmp_path / "package.json").write_text('{"dependencies": {"a": "1"}}\n', encoding="utf-8")
+
+    result = detect_git_diff(tmp_path, base, ecosystems=["npm"])
+
+    assert result.findings == []
+    assert len(result.evidence) == 1
 
 
 def _git(path: Path, *args: str) -> subprocess.CompletedProcess[str]:
