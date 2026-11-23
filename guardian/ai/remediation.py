@@ -29,6 +29,9 @@ ANOMALY_ACTIONS: dict[str, list[FixAction]] = {
     "unverified_install_script": [A.REMOVE_DEPENDENCY, A.REPLACE_DEPENDENCY, A.ESCALATE_REVIEW],
     "dependency_update": [A.PIN_VERSION, A.ESCALATE_REVIEW],
     "unpinned_ci_action": [A.PIN_ACTION_SHA, A.ESCALATE_REVIEW],
+    "integrity_change": [A.PIN_VERSION, A.REMOVE_DEPENDENCY, A.ESCALATE_REVIEW],
+    "resolved_source_change": [A.PIN_VERSION, A.REMOVE_DEPENDENCY, A.ESCALATE_REVIEW],
+    "missing_integrity": [A.PIN_VERSION, A.ESCALATE_REVIEW],
     "unpinned_base_image": [A.PIN_IMAGE_DIGEST, A.ESCALATE_REVIEW],
 }
 # Fixes are made in manifests and lockfiles, so fix proposals may name these files

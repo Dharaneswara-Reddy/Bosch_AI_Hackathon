@@ -13,6 +13,7 @@ from guardian.detectors import (
     git_diff,
     image_pin,
     install_script,
+    lockfile_integrity,
     sbom_diff,
     typosquat,
     unverified_source,
@@ -202,6 +203,50 @@ def _run_install_script(context: DetectorContext) -> DetectionResult:
     return combined
 
 
+def _run_lockfile_integrity(context: DetectorContext) -> DetectionResult:
+    ecosystems = _ecosystems(context)
+    root = context.target_path
+    lockfiles = _npm_lockfiles(root) if root is not None else []
+    if root is None or not lockfiles:
+        return lockfile_integrity.detect(None, baseline_lockfile=None, ecosystems=ecosystems)
+    baseline_commit = _baseline_commit(context)
+    combined = DetectionResult()
+    for lockfile in lockfiles:
+        relative = lockfile.relative_to(root).as_posix()
+        baseline = _git_lockfile(root, baseline_commit, relative) if baseline_commit else None
+        partial = lockfile_integrity.detect(
+            lockfile, baseline_lockfile=baseline, ecosystems=["npm"]
+        )
+        lock_bytes = lockfile.read_bytes()
+        artifact_file = f"raw/detectors/lockfile_integrity/lockfiles/{relative}"
+        combined.artifacts[artifact_file] = lock_bytes
+        combined.evidence.extend(
+            record.model_copy(
+                update={"file": artifact_file, "sha256": sha256_bytes(lock_bytes)}, deep=True
+            )
+            for record in partial.evidence
+        )
+        combined.findings.extend(partial.findings)
+        combined.finding_details.update(partial.finding_details)
+    unique = {finding.finding_id: finding for finding in reversed(combined.findings)}
+    combined.findings = list(unique.values())
+    status = CoverageStatus.FINDING if combined.findings else CoverageStatus.PASS
+    counts = {ecosystem: 0 for ecosystem in ecosystems}
+    counts["npm"] = len(lockfiles)
+    combined.coverage = [
+        row
+        for ecosystem in ecosystems
+        for row in coverage_rows(
+            "lockfile_integrity",
+            [ecosystem],
+            status if ecosystem == "npm" else CoverageStatus.NOT_COVERED,
+            "" if ecosystem == "npm" else "Lockfile integrity is checked for npm only",
+            counts,
+        )
+    ]
+    return combined
+
+
 def _materialize_result(
     context: DetectorContext, name: str, result: DetectionResult
 ) -> DetectionResult:
@@ -271,6 +316,7 @@ __all__ = [
     "_run_git_diff",
     "_run_image_pin",
     "_run_install_script",
+    "_run_lockfile_integrity",
     "_run_sbom_diff",
     "_run_typosquat",
     "_run_unverified_source",

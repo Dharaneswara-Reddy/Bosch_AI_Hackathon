@@ -162,6 +162,8 @@ def test_malicious_package_is_always_act() -> None:
         ("suspected_typosquat", None, "R-AN-1", "high", SsvcDecision.ATTEND),
         ("unpinned_base_image", "latest", "R-AN-2", "medium", SsvcDecision.TRACK_STAR),
         ("unpinned_base_image", "3", "R-AN-3", "low", SsvcDecision.TRACK),
+        ("integrity_change", None, "R-AN-1", "high", SsvcDecision.ATTEND),
+        ("missing_integrity", None, "R-AN-3", "low", SsvcDecision.TRACK),
     ],
 )
 def test_anomalies_keep_their_levels_with_consistent_decision(anomaly, tag, rule, level, decision):

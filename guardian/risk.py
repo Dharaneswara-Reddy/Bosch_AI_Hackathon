@@ -51,6 +51,9 @@ ANOMALY_REASONS = {
     "unpinned_base_image": "base image is not pinned to a digest",
     "dependency_update": "dependency changed versus the baseline",
     "unpinned_ci_action": "CI action is not pinned to a commit",
+    "integrity_change": "lockfile integrity hash changed without a version change",
+    "resolved_source_change": "lockfile download host changed without a version change",
+    "missing_integrity": "lockfile entry has no integrity hash",
 }
 
 
@@ -217,13 +220,24 @@ def _exposure_for_scope(dev: bool | None) -> Exposure:
 
 def _anomaly_rule(finding: Finding) -> tuple[str, RiskLevel]:
     kind = finding.anomaly_type
-    if kind in {"suspected_typosquat", "install_script_change", "unverified_install_script"}:
+    if kind in {
+        "suspected_typosquat",
+        "install_script_change",
+        "unverified_install_script",
+        "integrity_change",
+        "resolved_source_change",
+    }:
         return "R-AN-1", RiskLevel.HIGH
     if kind == "unexpected_dependency" or (
         kind == "unpinned_base_image" and finding.image_tag in {None, "", "latest", UNKNOWN}
     ):
         return "R-AN-2", RiskLevel.MEDIUM
-    if kind in {"dependency_update", "unpinned_ci_action", "unpinned_base_image"}:
+    if kind in {
+        "dependency_update",
+        "unpinned_ci_action",
+        "unpinned_base_image",
+        "missing_integrity",
+    }:
         return "R-AN-3", RiskLevel.LOW
     raise ValueError(f"No configured risk rule for anomaly {kind!r}")
 
