@@ -95,10 +95,15 @@ def test_lists_proposals_with_source_target_and_applicability(client: TestClient
     rule = fixes["rule-f1"]
     assert (rule["source"], rule["status"]) == ("rule", "proposed")
     assert rule["target"] == {"ecosystem": "npm", "package": "lodash",
-                              "from_version": "4.17.4", "to_version": "4.17.21"}
+                              "from_version": "4.17.4", "to_version": "4.17.21",
+                              "transitive": False, "parent": None, "parent_version": None}
+    assert rule["expected_reduction"] == {
+        "fixes": {"high": 1}, "finding_ids": ["f1"], "advisories": ["CVE-2021-23337"],
+        "remaining_on_package": 0}
     assert rule["unavailable_reason"] is None
     ai = fixes["ai-2"]
     assert ai["source"] == "ai" and "manually" in str(ai["unavailable_reason"])
+    assert ai["expected_reduction"] is None
 
 
 def test_start_pauses_for_approval_then_approval_runs_in_the_background(

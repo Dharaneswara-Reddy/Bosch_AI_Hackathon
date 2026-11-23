@@ -34,6 +34,11 @@ def _lowest_fix(current: str, fixed: list[str]) -> str:
     return min(same_major or newer, key=version_key)
 
 
+def _fixable(node: Component) -> bool:
+    return node.scope is Scope.DIRECT or (
+        node.scope is Scope.TRANSITIVE and node.ecosystem == "npm")
+
+
 def _upgradable(run: RunResult) -> dict[str, list[Finding]]:
     nodes = {node.component_id: node for node in run.graph.nodes}
     groups: dict[str, list[Finding]] = {}
@@ -41,10 +46,31 @@ def _upgradable(run: RunResult) -> dict[str, list[Finding]]:
         node = nodes.get(finding.component_id)
         if (
             finding.kind is FindingKind.VULNERABILITY and finding.fixed_versions
-            and node is not None and node.scope is Scope.DIRECT
+            and node is not None and _fixable(node)
         ):
             groups.setdefault(node.component_id, []).append(finding)
     return groups
+
+
+def _wording(
+    component: Component, target: str, advisories: list[str]
+) -> tuple[str, str, FixAction]:
+    fixes = ", ".join(advisories) or "the finding"
+    if component.scope is Scope.TRANSITIVE:
+        return (
+            f"Force {component.name} from {component.version} to {target}, the lowest "
+            f"scanner-reported version that fixes {fixes}, with an npm override. If a newer "
+            f"direct parent already depends on a fixed {component.name}, that parent is "
+            "upgraded instead.",
+            f"Remove the {component.name} override, or revert it to {component.version}.",
+            FixAction.PIN_VERSION,
+        )
+    return (
+        f"Upgrade {component.name} from {component.version} to {target}, the lowest "
+        f"scanner-reported version that fixes {fixes}.",
+        f"Revert {component.name} to {component.version}.",
+        FixAction.UPGRADE,
+    )
 
 
 def _proposal(component: Component, findings: list[Finding]) -> RemediationProposal:
@@ -53,17 +79,15 @@ def _proposal(component: Component, findings: list[Finding]) -> RemediationPropo
     )
     top = max(findings, key=lambda f: RISK_ORDER[f.risk_level])
     advisories = sorted({f.advisory_id for f in findings if f.advisory_id})
+    rationale, rollback, action = _wording(component, target, advisories)
     jump = _major(target) != _major(component.version)
     return RemediationProposal(
         proposal_id=f"rule-{top.finding_id}",
         finding_id=top.finding_id,
-        action=FixAction.UPGRADE,
+        action=action,
         target_version=target,
-        rationale=(
-            f"Upgrade {component.name} from {component.version} to {target}, the lowest "
-            f"scanner-reported version that fixes {', '.join(advisories) or 'the finding'}."
-        ),
-        rollback=f"Revert {component.name} to {component.version}.",
+        rationale=rationale,
+        rollback=rollback,
         breaking_change_risk="medium" if jump else "low",
         evidence_ids=list(dict.fromkeys(e for f in findings for e in f.evidence_ids)),
         validated=True,

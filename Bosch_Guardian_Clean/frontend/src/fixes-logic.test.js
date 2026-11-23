@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {buildDecision, fixTitle, levelRows, needsPolling, primaryAction, statusLabel} from './fixes-logic.js';
+import {buildDecision, compareReduction, expectedText, fixTitle, levelRows, needsPolling, primaryAction, statusLabel} from './fixes-logic.js';
 
 const entry = (status, extra = {}) => ({
   status, source: 'rule', unavailable_reason: null,
@@ -49,4 +49,23 @@ test('buildDecision requires a reviewer and trims input', () => {
 test('statusLabel is human readable', () => {
   assert.equal(statusLabel('awaiting_approval'), 'Awaiting approval');
   assert.equal(statusLabel('verified'), 'Verified');
+});
+
+const expected = {fixes: {high: 6, medium: 1}, finding_ids: ['a'], advisories: ['A', 'B', 'C'], remaining_on_package: 2};
+
+test('expectedText summarises levels and advisory count before approval', () => {
+  assert.equal(expectedText(expected), 'Expected: fixes 6 High, 1 Medium (3 advisories)');
+  assert.equal(expectedText({...expected, advisories: ['A'], fixes: {low: 1}}), 'Expected: fixes 1 Low (1 advisory)');
+  assert.equal(expectedText({...expected, fixes: {}, advisories: []}), 'Expected: fixes no findings');
+  assert.equal(expectedText(null), '');
+});
+
+test('compareReduction sets expected beside the actual fixed findings', () => {
+  const diff = {fixed: [{risk_level: 'high'}, {risk_level: 'high'}, {risk_level: 'medium'}]};
+  assert.deepEqual(compareReduction(expected, diff), {
+    expected: '6 High, 1 Medium', actual: '2 High, 1 Medium', matches: false});
+  const same = {fixed: [...Array(6).fill({risk_level: 'high'}), {risk_level: 'medium'}]};
+  assert.equal(compareReduction(expected, same).matches, true);
+  assert.equal(compareReduction(null, same), null);
+  assert.equal(compareReduction(expected, {fixed: []}).actual, 'nothing');
 });

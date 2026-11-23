@@ -5,6 +5,7 @@ resolves wheels only, a Gemfile is evaluated only when it is purely declarative,
 tests run only inside a network-less, read-only container.
 """
 
+import importlib.util
 import json
 import os
 import re
@@ -13,11 +14,12 @@ import subprocess
 import sys
 from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel
 
 from guardian.prepare import BASE_CMD, NPM_TIMEOUT_S
+from guardian.remediate.candidates import version_key
 
 IGNORED_DIRS = frozenset({"node_modules", ".git"})
 SOURCE_SUFFIXES = frozenset({".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx"})
@@ -27,6 +29,13 @@ TEST_TIMEOUT_S = 600
 CONTAINER_IMAGE = "node:20-slim"
 TEST_LIMITS = ("--cpus", "1", "--memory", "512m", "--pids-limit", "256")
 DEFAULT_TEST_SCRIPT = "no test specified"
+MAX_OUTPUT = 200_000
+FAILURE_TAIL = 800
+PLAIN_VERSION_SPEC = re.compile(r"^(\^|~|>=|=)?\s*\d+(?:\.\d+){2}(?:[-+][\w.+-]*)?$")
+PIP_REQUIREMENT = re.compile(
+    r"^([A-Za-z0-9._-]+)(\[[^\]]*\])?\s*"
+    r"([<>=!~]+\s*[^\s;#,]+(?:\s*,\s*[<>=!~]+\s*[^\s;#,]+)*)(.*)$"
+)
 GEMFILE_DSL = re.compile(
     r"^\s*(?:#.*|source\b.*|gem\s.*|group\b.*|platforms?\b.*|ruby\b.*|end|git_source\b.*|)$"
 )
@@ -41,6 +50,7 @@ class CommandResult(BaseModel):
 
 
 Runner = Callable[[Sequence[str], Path, int], CommandResult]
+ParentLookup = Callable[[str, str, str, str], str | None]
 
 
 class FixTarget(BaseModel):
@@ -48,6 +58,9 @@ class FixTarget(BaseModel):
     package: str
     from_version: str
     to_version: str
+    transitive: bool = False
+    parent: str | None = None
+    parent_version: str | None = None
 
 
 class StepResult(BaseModel):
@@ -74,7 +87,9 @@ def run_command(command: Sequence[str], cwd: Path, timeout: int) -> CommandResul
         return CommandResult(124, f"timed out after {timeout}s: {command[0]}")
     except OSError as error:
         return CommandResult(127, f"cannot run {command[0]}: {error}")
-    return CommandResult(done.returncode, (done.stderr or done.stdout)[-800:].strip())
+    if done.returncode == 0:
+        return CommandResult(0, done.stdout[-MAX_OUTPUT:].strip())
+    return CommandResult(done.returncode, (done.stderr or done.stdout)[-FAILURE_TAIL:].strip())
 
 
 def create_sandbox(repo: Path, dest: Path) -> Path:
@@ -94,25 +109,48 @@ def _normal(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name).lower()
 
 
+def _rewrite_spec(spec: object, version: str) -> str | None:
+    if not isinstance(spec, str) or ":" in spec or "/" in spec:
+        return None
+    plain = PLAIN_VERSION_SPEC.match(spec)
+    return f"{plain[1] or ''}{version}" if plain else f"^{version}"
+
+
+def _write_manifest(manifest: Path, data: dict[str, Any]) -> None:
+    manifest.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+
 def _npm_edit(root: Path, target: FixTarget) -> list[Path]:
     changed = []
     for manifest in _files(root, "package.json"):
         data = json.loads(manifest.read_text(encoding="utf-8"))
         for section in NPM_SECTIONS:
-            spec = data.get(section, {}).get(target.package)
-            if spec is not None:
-                prefix = spec[0] if spec[:1] in "^~" else ""
-                data[section][target.package] = f"{prefix}{target.to_version}"
-                manifest.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+            rewritten = _rewrite_spec(data.get(section, {}).get(target.package), target.to_version)
+            if rewritten is not None:
+                data[section][target.package] = rewritten
+                _write_manifest(manifest, data)
                 changed.append(manifest)
                 break
     return changed
 
 
+def _npm_override(root: Path, target: FixTarget) -> list[Path]:
+    manifests = list(_files(root, "package.json"))
+    locked = [m for m in manifests if (m.parent / "package-lock.json").is_file()]
+    shallowest = sorted(manifests, key=lambda m: len(m.relative_to(root).parts))[:1]
+    changed = []
+    for manifest in locked or shallowest:
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+        data.setdefault("overrides", {})[target.package] = target.to_version
+        _write_manifest(manifest, data)
+        changed.append(manifest)
+    return changed
+
+
 def _pin_line(line: str, target: FixTarget) -> str:
-    match = re.match(r"^([A-Za-z0-9._-]+)(\[[^\]]*\])?(\s*==\s*)([^\s;#]+)(.*)$", line)
+    match = PIP_REQUIREMENT.match(line)
     if match and _normal(match[1]) == _normal(target.package):
-        return f"{match[1]}{match[2] or ''}{match[3]}{target.to_version}{match[5]}"
+        return f"{match[1]}{match[2] or ''}=={target.to_version}{match[4]}"
     return line
 
 
@@ -155,19 +193,34 @@ EDITORS: dict[str, Callable[[Path, FixTarget], list[Path]]] = {
 MANIFEST_NAMES = {"npm": "package.json", "pypi": "requirements.txt", "gem": "Gemfile"}
 
 
-def _declaring_files(root: Path, target: FixTarget) -> list[Path]:
-    needle = {"npm": f'"{target.package}"', "gem": target.package, "pypi": _normal(target.package)}
-    pypi = target.ecosystem == "pypi"
-    pattern = "requirements*.txt" if pypi else MANIFEST_NAMES[target.ecosystem]
-    found = []
-    for path in _files(root, pattern):
-        text = path.read_text(encoding="utf-8")
-        if needle[target.ecosystem] in (_normal(text) if target.ecosystem == "pypi" else text):
-            found.append(path)
-    return found
+def _passed(root: Path, changed: list[Path], detail: str) -> StepResult:
+    return StepResult(status="passed", files=[p.relative_to(root).as_posix() for p in changed],
+                      detail=detail)
 
 
-def apply_upgrade(root: Path, target: FixTarget) -> StepResult:
+def _apply_transitive(root: Path, target: FixTarget, lookup: ParentLookup | None) -> StepResult:
+    parent = target.parent
+    newer = lookup(parent, target.parent_version or "", target.package,
+                   target.to_version) if lookup and parent else None
+    if newer and parent:
+        upgrade = FixTarget(ecosystem="npm", package=parent,
+                            from_version=target.parent_version or "", to_version=newer)
+        changed = _npm_edit(root, upgrade)
+        if changed:
+            return _passed(root, changed, (
+                f"upgraded {parent} to {newer}, which depends on "
+                f"{target.package} {target.to_version} or newer"))
+    changed = _npm_override(root, target)
+    if not changed:
+        return StepResult(status="failed", detail="no package.json found to hold an override")
+    return _passed(root, changed, (
+        f"pinned {target.package} to {target.to_version} with an npm override "
+        "(no newer direct parent was found that pulls a fixed version)"))
+
+
+def apply_upgrade(
+    root: Path, target: FixTarget, parent_lookup: ParentLookup | None = None
+) -> StepResult:
     editor = EDITORS.get(target.ecosystem)
     if editor is None:
         return StepResult(
@@ -175,16 +228,38 @@ def apply_upgrade(root: Path, target: FixTarget) -> StepResult:
             detail=f"unsupported ecosystem '{target.ecosystem}': fixes are applied only to "
             f"{', '.join(sorted(EDITORS))}; make this change manually",
         )
+    if target.ecosystem == "npm" and target.transitive:
+        return _apply_transitive(root, target, parent_lookup)
     changed = editor(root, target)
     if not changed:
         return StepResult(
             status="failed",
             detail=f"{target.package} {target.from_version} is not declared in a "
-            f"{MANIFEST_NAMES[target.ecosystem]} with an exact, editable version, so it is "
-            "pulled in indirectly or by a range; upgrade the package that depends on it",
+            f"{MANIFEST_NAMES[target.ecosystem]} with an editable registry version, so it is "
+            "pulled in indirectly; upgrade the package that depends on it",
         )
-    return StepResult(status="passed", files=[p.relative_to(root).as_posix() for p in changed],
-                      detail=f"set {target.package} to {target.to_version}")
+    return _passed(root, changed, f"set {target.package} to {target.to_version}")
+
+
+def npm_parent_lookup(run: Runner) -> ParentLookup:
+    def lookup(parent: str, version: str, child: str, fixed: str) -> str | None:
+        field = f"dependencies.{child}"
+        done = run(["npm", "view", f"{parent}@>{version}", "version", field, "--json"],
+                   Path.cwd(), NPM_TIMEOUT_S)
+        if done.returncode != 0:
+            return None
+        try:
+            rows = json.loads(done.output)
+        except json.JSONDecodeError:
+            return None
+        found = [
+            row["version"] for row in (rows if isinstance(rows, list) else [rows])
+            if "-" not in row["version"]
+            and version_key(str(row.get(field, "0"))) >= version_key(fixed)
+        ]
+        return min(found, key=version_key) if found else None
+
+    return lookup
 
 
 def _npm_lock(folder: Path, run: Runner) -> StepResult:
@@ -209,23 +284,35 @@ def _gem_lock(folder: Path, target: FixTarget, run: Runner) -> StepResult:
     return StepResult(status="passed", detail="bundler resolved the upgraded gem")
 
 
+def _pip_command() -> list[str] | None:
+    if importlib.util.find_spec("pip"):
+        return [sys.executable, "-m", "pip"]
+    found = shutil.which("pip3") or shutil.which("pip")
+    return [found] if found else None
+
+
 def _pip_resolve(path: Path, run: Runner) -> StepResult:
-    command = [sys.executable, "-m", "pip", "install", "--dry-run", "--ignore-installed",
-               "--only-binary=:all:", "-r", path.name]
+    pip = _pip_command()
+    if pip is None:
+        return StepResult(status="failed", detail="pip is not installed on this host")
+    command = [*pip, "install", "--dry-run", "--ignore-installed", "--only-binary=:all:",
+               "-r", path.name]
     done = run(command, path.parent, TOOL_TIMEOUT_S)
     if done.returncode != 0:
         return StepResult(status="failed", detail=f"pip could not resolve: {done.output}")
     return StepResult(status="passed", detail="pip resolved the pins using wheels only")
 
 
-def build_check(root: Path, target: FixTarget, run: Runner = run_command) -> StepResult:
+def build_check(
+    root: Path, target: FixTarget, run: Runner, files: Sequence[str]
+) -> StepResult:
     checks: dict[str, Callable[[Path], StepResult]] = {
         "npm": lambda path: _npm_lock(path.parent, run),
         "gem": lambda path: _gem_lock(path.parent, target, run),
         "pypi": lambda path: _pip_resolve(path, run),
     }
-    for path in _declaring_files(root, target):
-        result = checks[target.ecosystem](path)
+    for name in files:
+        result = checks[target.ecosystem](root / name)
         if result.status != "passed":
             return result
     return StepResult(status="passed", detail="dependency resolution succeeded")

@@ -30,3 +30,21 @@ export function buildDecision(approved, reviewer, note) {
   if (!name) return {error: 'Enter your name so the decision is recorded.'};
   return {body: {approved, reviewer: name, note: note.trim()}};
 }
+
+const levelText = counts => LEVELS.filter(l => counts[l]).map(l => `${counts[l]} ${l[0].toUpperCase()}${l.slice(1)}`).join(', ');
+
+export function expectedText(reduction) {
+  if (!reduction) return '';
+  const levels = levelText(reduction.fixes) || 'no findings';
+  const count = reduction.advisories.length;
+  const advisories = count ? ` (${count} ${count === 1 ? 'advisory' : 'advisories'})` : '';
+  return `Expected: fixes ${levels}${advisories}`;
+}
+
+export function compareReduction(reduction, diff) {
+  if (!reduction || !diff) return null;
+  const actual = {};
+  diff.fixed.forEach(ref => { actual[ref.risk_level] = (actual[ref.risk_level] || 0) + 1; });
+  const sameCounts = LEVELS.every(l => (reduction.fixes[l] || 0) === (actual[l] || 0));
+  return {expected: levelText(reduction.fixes) || 'nothing', actual: levelText(actual) || 'nothing', matches: sameCounts};
+}

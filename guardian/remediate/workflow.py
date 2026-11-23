@@ -29,10 +29,12 @@ from guardian.remediate.run import (
     verification_summary,
 )
 from guardian.remediate.sandbox import (
+    ParentLookup,
     Runner,
     apply_upgrade,
     build_check,
     create_sandbox,
+    npm_parent_lookup,
     run_command,
     run_tests,
 )
@@ -58,6 +60,7 @@ class FixDeps:
     runner: Runner = run_command
     scan: ScanFn = scan_without_ai
     engine: str | None = field(default_factory=find_engine)
+    parent_lookup: ParentLookup | None = None
 
 
 def _thread(scan_id: str, proposal_id: str) -> Any:
@@ -116,7 +119,8 @@ class _Steps:
     def sandbox_apply(self, run: FixRun) -> FixRun:
         assert run.target is not None
         sandbox = create_sandbox(self.work_dir / "repo", self._folder(run) / "sandbox")
-        done = apply_upgrade(sandbox, run.target)
+        lookup = self.deps.parent_lookup or npm_parent_lookup(self.deps.runner)
+        done = apply_upgrade(sandbox, run.target, lookup)
         failed = done.status != "passed"
         return run.model_copy(update={
             "apply": done, "status": FixStatus.FAILED if failed else run.status,
@@ -124,7 +128,8 @@ class _Steps:
 
     def build_check(self, run: FixRun) -> FixRun:
         assert run.target is not None
-        done = build_check(self._folder(run) / "sandbox", run.target, self.deps.runner)
+        files = run.apply.files if run.apply else []
+        done = build_check(self._folder(run) / "sandbox", run.target, self.deps.runner, files)
         failed = done.status != "passed"
         return run.model_copy(update={
             "build": done, "status": FixStatus.FAILED if failed else run.status,

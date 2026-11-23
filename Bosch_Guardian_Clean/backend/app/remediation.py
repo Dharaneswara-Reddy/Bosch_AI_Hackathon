@@ -7,6 +7,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from pydantic import BaseModel, Field
 
 from guardian.models import RemediationProposal
+from guardian.remediate.reduction import ExpectedReduction, expected_reduction
 from guardian.remediate.run import (
     Decision,
     FixPlanError,
@@ -45,6 +46,7 @@ class FixEntry(BaseModel):
     status: FixStatus
     target: FixTarget | None
     unavailable_reason: str | None
+    expected_reduction: ExpectedReduction | None
     result: FixRun | None
 
 
@@ -87,7 +89,8 @@ def list_fixes(scan_id: str) -> list[FixEntry]:
         entries.append(FixEntry(
             proposal=proposal, source="rule" if proposal.proposal_id.startswith("rule-") else "ai",
             status=stored.status if stored else FixStatus.PROPOSED, target=target,
-            unavailable_reason=reason, result=stored,
+            unavailable_reason=reason, expected_reduction=expected_reduction(proposal, run),
+            result=stored,
         ))
     return entries
 

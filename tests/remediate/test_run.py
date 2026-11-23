@@ -13,6 +13,7 @@ from guardian.models import (
     RiskLevel,
     RunResult,
     Scan,
+    Scope,
 )
 from guardian.remediate.diff import FindingRef, RescanDiff
 from guardian.remediate.run import (
@@ -96,3 +97,37 @@ def test_summary_mentions_new_findings_and_failed_build() -> None:
     assert verification_summary(run) == (
         "No findings were fixed. Introduced 1 new finding: 1 Critical (CVE-9). "
         "Build check failed: ETARGET. Tests passed.")
+
+
+def _transitive_result() -> RunResult:
+    nodes = [
+        Component(component_id="root", purl="pkg:npm/app@1", name="app", version="1",
+                  ecosystem="npm", scope=Scope.DIRECT),
+        Component(component_id="parent", purl="pkg:npm/ej@0.1.3", name="ej", version="0.1.3",
+                  ecosystem="npm", scope=Scope.DIRECT),
+        Component(component_id="child", purl="pkg:npm/jws@0.2.6", name="jws", version="0.2.6",
+                  ecosystem="npm", scope=Scope.TRANSITIVE),
+    ]
+    finding = Finding(finding_id="f1", kind=FindingKind.VULNERABILITY, component_id="child",
+                      purl="pkg:npm/jws@0.2.6", dependency_path=["root", "parent", "child"])
+    return RunResult(scan=Scan(scan_id="s", target="t", started_at=datetime.now(UTC)),
+                     graph=GraphArtifact(nodes=nodes), findings=[finding])
+
+
+@pytest.mark.parametrize("action", [FixAction.PIN_VERSION, FixAction.UPGRADE])
+def test_resolve_target_names_the_direct_parent_of_a_transitive_package(
+    action: FixAction,
+) -> None:
+    target = resolve_target(_proposal(action, "3.2.3"), _transitive_result())
+    assert (target.package, target.from_version, target.to_version) == ("jws", "0.2.6", "3.2.3")
+    assert (target.transitive, target.parent, target.parent_version) == (True, "ej", "0.1.3")
+
+
+def test_resolve_target_has_no_parent_for_a_direct_package() -> None:
+    target = resolve_target(_proposal(FixAction.PIN_VERSION), _result())
+    assert not target.transitive and target.parent is None and target.package == "lib"
+
+
+def test_resolve_target_still_refuses_an_ai_parent_upgrade_without_a_package() -> None:
+    with pytest.raises(FixPlanError):
+        resolve_target(_proposal(FixAction.UPGRADE_PARENT), _transitive_result())

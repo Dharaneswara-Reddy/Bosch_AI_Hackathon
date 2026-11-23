@@ -1,7 +1,7 @@
 import React, {useCallback, useEffect, useState} from 'react';
 import {Check, LoaderCircle, X} from 'lucide-react';
 import {Badge} from './results.jsx';
-import {buildDecision, fixTitle, levelRows, needsPolling, primaryAction, statusLabel} from './fixes-logic.js';
+import {buildDecision, compareReduction, expectedText, fixTitle, levelRows, needsPolling, primaryAction, statusLabel} from './fixes-logic.js';
 
 const API = '/api';
 const POLL_MS = 1500;
@@ -24,12 +24,20 @@ function FindingList({title, refs}) {
     <code>{r.advisory_id || r.finding_id}</code> {r.package} {r.version} <Badge tone={r.risk_level === 'low' ? 'green' : 'amber'}>{r.risk_level}</Badge></li>)}</ul></div>;
 }
 
-function FixResult({run}) {
+function ExpectedVsActual({expected, diff}) {
+  const comparison = compareReduction(expected, diff);
+  if (!comparison) return null;
+  return <p className="body-text">Expected to fix: <strong>{comparison.expected}</strong> · Actually fixed: <strong>{comparison.actual}</strong>{' '}
+    <Badge tone={comparison.matches ? 'green' : 'amber'}>{comparison.matches ? 'as expected' : 'differs'}</Badge></p>;
+}
+
+function FixResult({run, expected}) {
   const diff = run.diff;
   return <div className="fix-result">
     {run.summary && <p className="signals-summary">{run.summary}</p>}
     {run.error && <div className="notice error"><div><strong>Fix did not complete</strong><p>{run.error}</p></div></div>}
     {diff && <>
+      <ExpectedVsActual expected={expected} diff={diff}/>
       <div className="table-scroll"><table className="signals"><thead><tr><th>Risk level</th><th>Before</th><th>After</th></tr></thead>
         <tbody>{levelRows(diff).map(r => <tr key={r.level}><td>{r.level}</td><td>{r.before}</td>
           <td><strong>{r.after}</strong> {r.delta !== 0 && <small>({r.delta > 0 ? '+' : ''}{r.delta})</small>}</td></tr>)}</tbody></table></div>
@@ -59,13 +67,14 @@ function FixCard({entry, busy, onDecide}) {
     <p className="body-text">{proposal.rationale}</p>
     <div className="summary-grid"><div><span>Rollback</span><strong>{proposal.rollback}</strong></div>
       <div><span>Breaking-change risk</span><strong>{proposal.breaking_change_risk}</strong></div></div>
+    {entry.expected_reduction && <p className="body-text"><strong>{expectedText(entry.expected_reduction)}</strong></p>}
     {entry.unavailable_reason && <p className="fix-note">Not applied automatically: {entry.unavailable_reason}</p>}
     {action === 'decide' && <div className="fix-decision">
       <input value={note} onChange={e => setNote(e.target.value)} placeholder="Reviewer note (optional)" aria-label="Reviewer note"/>
       <button className="primary" disabled={busy} onClick={() => onDecide(entry, true, note)}><Check size={16}/> Approve and verify</button>
       <button className="outline" disabled={busy} onClick={() => onDecide(entry, false, note)}><X size={16}/> Reject</button></div>}
     {(action === 'wait' || busy) && <p className="notice progress"><LoaderCircle size={16} className="spin"/> Applying in a sandbox, resolving dependencies and rescanning…</p>}
-    {result && status !== 'running' && <FixResult run={result}/>}
+    {result && status !== 'running' && <FixResult run={result} expected={entry.expected_reduction}/>}
   </div>;
 }
 
