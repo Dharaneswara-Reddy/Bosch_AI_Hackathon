@@ -13,7 +13,7 @@ from guardian.changes import ChangeSummary
 from guardian.fetch import FetchError
 from guardian.models import GraphArtifact
 
-from . import pipeline, review
+from . import pipeline, remediation, review
 from .schemas import ScanRecord, ScanRequest, ScanResult, ScanStarted
 
 pipeline.load_root_env()
@@ -24,6 +24,7 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
+app.include_router(remediation.router)
 _default_base: Path | None = None
 
 

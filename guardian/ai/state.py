@@ -8,23 +8,20 @@ facts live in ``ReviewContext`` (tool output) and are copied into evidence packs
 from __future__ import annotations
 
 import operator
-from enum import StrEnum
 from typing import Annotated, Any, TypedDict
 
 from pydantic import BaseModel
 
-from guardian.models import AgentClaim, AgentTrace, Relevance, RiskAdjustment
+from guardian.models import (
+    AgentClaim,
+    AgentTrace,
+    FixAction,
+    Relevance,
+    RemediationProposal,
+    RiskAdjustment,
+)
 
-
-class FixAction(StrEnum):
-    UPGRADE = "upgrade"
-    UPGRADE_PARENT = "upgrade_parent"
-    PIN_VERSION = "pin_version"
-    REMOVE_DEPENDENCY = "remove_dependency"
-    REPLACE_DEPENDENCY = "replace_dependency"
-    PIN_ACTION_SHA = "pin_action_sha"
-    PIN_IMAGE_DIGEST = "pin_image_digest"
-    ESCALATE_REVIEW = "escalate_review"
+__all__ = ["FixAction", "RemediationProposal"]
 
 
 class EvidencePack(BaseModel):
@@ -71,20 +68,6 @@ class RemediationCandidate(BaseModel):
     upgrade_parent: str | None
     major_version_change: bool
     evidence_ids: list[str]
-
-
-class RemediationProposal(BaseModel):
-    proposal_id: str
-    finding_id: str
-    action: FixAction
-    target_version: str | None
-    rationale: str
-    rollback: str
-    breaking_change_risk: str
-    evidence_ids: list[str]
-    requires_human_approval: bool = True
-    validated: bool = False
-    rejected_reason: str | None = None
 
 
 class BranchInput(TypedDict):
