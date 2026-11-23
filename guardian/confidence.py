@@ -38,9 +38,8 @@ def apply_confidence(finding: Finding, policy: RiskPolicy) -> Finding:
         })
     weights = policy.confidence_weights.model_dump()
     present = _factors(finding)
-    score = round(
-        sum(weights[name] for name, ok in present.items() if ok) / policy.confidence_weights.total, 2
-    )
+    earned = sum(weights[name] for name, ok in present.items() if ok)
+    score = round(earned / policy.confidence_weights.total, 2)
     low = score < policy.review_confidence_threshold
     reasons: list[str] = []
     if low:

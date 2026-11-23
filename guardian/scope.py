@@ -62,7 +62,8 @@ DEV_GROUPS = frozenset({"development", "test"})
 _GROUP_BLOCK = re.compile(r"^\s*group\s*\(?\s*([^\n]*?)\s*\)?\s+do\b")
 _BLOCK_OPEN = re.compile(r"(\bdo(\s*\|[^|]*\|)?\s*$)|^\s*(if|unless|case|begin)\b")
 _GEM_LINE = re.compile(r"^\s*gem\s*\(?\s*['\"]([^'\"]+)['\"](.*)")
-_INLINE_GROUP = re.compile(r"\bgroups?:\s*(\[[^\]]*\]|%i\[[^\]]*\]|:\w+)|:groups?\s*=>\s*(\[[^\]]*\]|:\w+)")
+_LIST = r"(\[[^\]]*\]|%i\[[^\]]*\]|:\w+)"
+_INLINE_GROUP = re.compile(rf"\bgroups?:\s*{_LIST}|:groups?\s*=>\s*{_LIST}")
 
 
 class GemfileGroups(BaseModel):
