@@ -167,3 +167,25 @@ def test_attach_paths_missing_entry_left_empty() -> None:
     assert out.dependency_path == []
     assert out.path_count is None
     assert out.finding_id == f.finding_id
+
+
+def test_merge_keeps_exploit_and_cvss_intel_from_whichever_scanner_has_it() -> None:
+    grype = make("grype", "GHSA-1", ["CVE-1"]).model_copy(update={
+        "epss": 0.3, "epss_percentile": 0.97, "epss_date": "2026-11-22",
+        "known_exploited": False, "cvss_vector": "CVSS:3.1/AV:N/UI:N", "cvss_score": 7.5,
+        "intel_evidence_ids": ["g-epss"],
+    })
+    osv = make("osv", "CVE-1").model_copy(update={
+        "cvss_vector": "CVSS:3.1/AV:L/UI:N", "intel_evidence_ids": ["o-cvss"],
+    })
+    (merged,) = merge_findings([osv, grype])
+    assert (merged.epss, merged.epss_percentile, merged.epss_date) == (0.3, 0.97, "2026-11-22")
+    assert merged.known_exploited is False
+    assert (merged.cvss_vector, merged.cvss_score) == ("CVSS:3.1/AV:N/UI:N", 7.5)
+    assert merged.intel_evidence_ids == ["o-cvss", "g-epss"]
+
+
+def test_merge_known_exploited_true_wins_over_false() -> None:
+    a = make("grype", "CVE-1").model_copy(update={"known_exploited": False})
+    b = make("osv", "CVE-1").model_copy(update={"known_exploited": True})
+    assert merge_findings([a, b])[0].known_exploited is True

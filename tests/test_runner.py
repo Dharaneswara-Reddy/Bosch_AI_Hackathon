@@ -6,7 +6,7 @@ from types import ModuleType
 
 from guardian import cli, runner
 from guardian.cli import main
-from guardian.models import Component, Finding, GraphArtifact, RunResult, Scan
+from guardian.models import Component, Finding, GraphArtifact, Relevance, RunResult, Scan
 
 
 def _inventory(context):
@@ -240,3 +240,50 @@ def test_eval_command_reports_bad_scenarios_without_traceback(tmp_path, capsys):
     scenarios.mkdir()
     assert main(["eval", str(scenarios), "--base", str(tmp_path / "missing")]) == 1
     assert "guardian:" in capsys.readouterr().err
+
+
+def test_final_risk_uses_scope_and_relevance_computed_before_it(monkeypatch, tmp_path):
+    target = tmp_path / "target"
+    target.mkdir()
+    out = tmp_path / "scan"
+
+    def inventory(context):
+        context.sbom.write_text('{"bomFormat":"CycloneDX","components":[]}', encoding="utf-8")
+        context.result.graph = GraphArtifact(nodes=[
+            Component(component_id="lib", purl="pkg:npm/lib@1", name="lib", ecosystem="npm"),
+        ])
+
+    def scope(context):
+        context.result.graph.nodes[0].dev = False
+
+    def detect(context):
+        context.result.findings = [Finding(
+            finding_id="a", kind="vulnerability", component_id="lib", purl="pkg:npm/lib@1",
+            advisory_id="CVE-2000-1234", source_severity="medium", known_exploited=True,
+        )]
+
+    def relevance(context):
+        context.result.findings[0].relevance = Relevance(reachability="confirmed")
+
+    monkeypatch.setattr(runner, "_inventory", inventory)
+    monkeypatch.setattr(runner, "_scope", scope)
+    monkeypatch.setattr(runner, "_scanners", lambda context: None)
+    monkeypatch.setattr(runner, "_detectors", detect)
+    monkeypatch.setattr(runner, "_relevance", relevance)
+    monkeypatch.setattr(runner, "_render", lambda directory: None)
+    finding = runner.scan(target, out, use_llm=False).findings[0]
+    assert (finding.exposure, finding.ssvc_decision, finding.risk_level) == (
+        "open", "act", "critical",
+    )
+    assert finding.review_required is True
+    assert finding.confidence_score is not None
+
+
+def test_bad_risk_policy_fails_before_scanning(monkeypatch, tmp_path, capsys):
+    bad = tmp_path / "risk.toml"
+    bad.write_text("epss_threshold = 9\n", encoding="utf-8")
+    monkeypatch.setattr(runner, "DEFAULT_POLICY_PATH", bad)
+    target = tmp_path / "target"
+    target.mkdir()
+    assert main(["scan", str(target), "--out", str(tmp_path / "scan"), "--no-llm"]) == 1
+    assert "epss_threshold" in capsys.readouterr().err

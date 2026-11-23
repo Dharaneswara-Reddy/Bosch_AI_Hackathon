@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 
 from guardian.ai.review import load_injected, run_review
 from guardian.analysis import apply_relevance, apply_scope
+from guardian.confidence import apply_confidence
 from guardian.config import Settings
 from guardian.coverage import build_coverage
 from guardian.evidence import EvidenceStore, file_sha256
@@ -31,6 +32,7 @@ from guardian.models import (
     Evidence, Finding, FindingsArtifact, GraphArtifact, LlmStatus, Resolution, RunResult,
     Scan, ScanStatus, Scope,
 )
+from guardian.policy import DEFAULT_POLICY_PATH, load_policy
 from guardian.risk import assess
 from guardian.tools import ToolError
 
@@ -297,10 +299,12 @@ def _detectors(context: ScanContext) -> None:
 
 
 def _classify(context: ScanContext) -> None:
+    policy = load_policy(DEFAULT_POLICY_PATH)
     development = {node.component_id: node.dev for node in context.result.graph.nodes}
     for index, finding in enumerate(context.result.findings):
         try:
-            revised = assess(finding, dev=development.get(finding.component_id))
+            assessed = assess(finding, dev=development.get(finding.component_id), policy=policy)
+            revised = apply_confidence(assessed, policy)
         except ValueError as error:
             context.result.scan.errors[f"risk:{finding.finding_id}"] = str(error)
         else:
@@ -406,6 +410,7 @@ def _prepare(
     out = out.resolve()
     baseline = baseline.resolve(strict=True) if baseline is not None else None
     settings = Settings.load(use_llm=use_llm)
+    load_policy(DEFAULT_POLICY_PATH)
     commit, lock_hash, clean = UNKNOWN, UNKNOWN, False
     local: Path | str
     if candidate.is_dir():
@@ -474,7 +479,7 @@ def _scan_context(context: ScanContext, clean_commit: bool, use_llm: bool) -> Ru
     _write_model(context.out / "run.json", context.result.scan)
     for name, action in (
         ("inventory", _inventory), ("scope", _scope), ("scanners", _scanners),
-        ("detectors", _detectors), ("risk", _classify), ("relevance", _relevance),
+        ("detectors", _detectors), ("relevance", _relevance), ("risk", _classify),
     ):
         _attempt(context, name, action)
         _write_model(context.out / "run.json", context.result.scan)

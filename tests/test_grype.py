@@ -160,8 +160,10 @@ def test_epss_kev_and_cvss_are_kept_with_evidence() -> None:
         ],
         "knownExploited": [{"cve": "CVE-2026-0001"}],
         "cvss": [
-            {"vector": "CVSS:3.1/AV:L/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:L", "metrics": {"baseScore": 5.0}},
-            {"vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H", "metrics": {"baseScore": 9.8}},
+            {"vector": "CVSS:3.1/AV:L/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:L",
+             "metrics": {"baseScore": 5.0}},
+            {"vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+             "metrics": {"baseScore": 9.8}},
         ],
     })]}
     findings, evidence = parse_grype(raw, "raw/grype.json", SHA)

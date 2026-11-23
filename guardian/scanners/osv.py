@@ -117,7 +117,9 @@ def _convert(
     )
     vector = _cvss_vector(vuln)
     intel = (
-        [evidence.model_copy(update={"evidence_id": f"{ev_id}-cvss", "pointer": f"{pointer}/severity"})]
+        [evidence.model_copy(
+            update={"evidence_id": f"{ev_id}-cvss", "pointer": f"{pointer}/severity"}
+        )]
         if vector else []
     )
     finding = Finding(

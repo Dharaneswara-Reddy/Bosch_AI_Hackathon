@@ -1,5 +1,6 @@
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
+from typing import Any
 
 from guardian.models import UNKNOWN, Finding, FindingKind, MatchBasis, finding_id
 
@@ -67,6 +68,24 @@ def _match_basis(members: list[Finding]) -> MatchBasis:
     return MatchBasis.UNKNOWN
 
 
+def _first(members: list[Finding], field: str) -> Any:
+    return next((v for m in members if (v := getattr(m, field)) is not None), None)
+
+
+def _intel(members: list[Finding]) -> dict[str, Any]:
+    """Prefer the scanner that has a CVSS score, then the first value present for each field."""
+    ranked = sorted(members, key=lambda m: m.cvss_score is None)
+    known = [m.known_exploited for m in members if m.known_exploited is not None]
+    epss_source = [m for m in members if m.epss is not None]
+    fields = {name: _first(ranked, name) for name in ("cvss_vector", "cvss_score")}
+    fields.update({
+        name: _first(epss_source, name) for name in ("epss", "epss_percentile", "epss_date")
+    })
+    fields["known_exploited"] = any(known) if known else None
+    fields["intel_evidence_ids"] = _union(m.intel_evidence_ids for m in members)
+    return fields
+
+
 def _merge_group(members: list[Finding]) -> Finding:
     ids: set[str] = set().union(*(_ids(m) for m in members))
     primary = _primary_id(ids)
@@ -87,6 +106,7 @@ def _merge_group(members: list[Finding]) -> Finding:
             "fixed_versions": _union(m.fixed_versions for m in members),
             "evidence_ids": _union(m.evidence_ids for m in members),
             "match_basis": _match_basis(members),
+            **_intel(members),
         },
         deep=True,
     )
