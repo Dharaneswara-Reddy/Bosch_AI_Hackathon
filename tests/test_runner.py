@@ -1,41 +1,66 @@
 import json
+import shutil
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
 
+import pytest
+
 from guardian import runner
 from guardian.cli import main
-from guardian.models import Component, Finding, GraphArtifact
+from guardian.models import Component, Finding, FindingKind, GraphArtifact
+from guardian.runner import ScanContext
+
+VULN = FindingKind.VULNERABILITY
 
 
-def _inventory(context):
+def _inventory(context: ScanContext) -> None:
     context.sbom.write_text('{"bomFormat":"CycloneDX","components":[]}', encoding="utf-8")
-    context.result.graph = GraphArtifact(nodes=[
-        Component(component_id="lib", purl="pkg:npm/lib@1", name="lib", ecosystem="npm", dev=True),
-    ])
+    context.result.graph = GraphArtifact(
+        nodes=[
+            Component(
+                component_id="lib", purl="pkg:npm/lib@1", name="lib", ecosystem="npm", dev=True
+            ),
+        ]
+    )
 
 
-def test_scan_preserves_successful_stages_when_scanner_fails(monkeypatch, tmp_path):
+def _fake_graph_module(
+    shortest: Callable[[object, str], list[str] | None], count: Callable[[object, str], int]
+) -> ModuleType:
+    graph = ModuleType("guardian.graph")
+    graph.__dict__.update(shortest_path=shortest, path_count=count)
+    return graph
+
+
+def test_scan_preserves_successful_stages_when_scanner_fails(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     target = tmp_path / "target"
     target.mkdir()
     out = tmp_path / "scan"
-    review_calls = []
+    review_calls: list[str] = []
 
-    def scanner(context):
+    def scanner(context: ScanContext) -> None:
         raise RuntimeError("scanner unavailable")
 
-    def detect(context):
+    def detect(context: ScanContext) -> None:
         context.result.findings = [
             Finding(
-                finding_id="advisory", kind="vulnerability", component_id="lib",
-                purl="pkg:npm/lib@1", advisory_id="CVE-2000-1234", source_severity="high",
+                finding_id="advisory",
+                kind=VULN,
+                component_id="lib",
+                purl="pkg:npm/lib@1",
+                advisory_id="CVE-2000-1234",
+                source_severity="high",
             ),
         ]
 
-    def review(context):
+    def review(context: ScanContext) -> None:
         review_calls.append(context.result.scan.scan_id)
 
-    def report(directory):
+    def report(directory: Path) -> None:
         (directory / "report.html").write_text("report", encoding="utf-8")
 
     monkeypatch.setattr(runner, "_inventory", _inventory)
@@ -54,12 +79,14 @@ def test_scan_preserves_successful_stages_when_scanner_fails(monkeypatch, tmp_pa
     assert not review_calls
 
 
-def test_ai_failure_leaves_defensive_scan_complete(monkeypatch, tmp_path):
+def test_ai_failure_leaves_defensive_scan_complete(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     target = tmp_path / "target"
     target.mkdir()
     out = tmp_path / "scan"
 
-    def unavailable(context):
+    def unavailable(context: ScanContext) -> None:
         raise TimeoutError("review timed out")
 
     monkeypatch.setattr(runner, "_inventory", _inventory)
@@ -73,43 +100,52 @@ def test_ai_failure_leaves_defensive_scan_complete(monkeypatch, tmp_path):
     assert result.scan.errors["ai"] == "review timed out"
 
 
-def test_scan_rejects_using_target_as_output(tmp_path):
+def test_scan_rejects_using_target_as_output(tmp_path: Path) -> None:
     assert main(["scan", str(tmp_path), "--out", str(tmp_path)]) == 1
 
-def test_p2_parsers_merge_real_fixture_findings(monkeypatch, tmp_path):
-    import shutil
 
-    from guardian.scanners import grype, osv
+def _fixture_run(name: str) -> Callable[[Path, Path, str], Path]:
     fixtures = Path(__file__).parent / "fixtures"
 
-    def fixture_run(name):
-        def run(sbom_path, out_dir, image):
-            assert sbom_path.is_file()
-            output = out_dir / "raw" / f"{name}.json"
-            output.parent.mkdir(exist_ok=True)
-            shutil.copyfile(fixtures / f"{name}.sample.json", output)
-            return output
+    def run(sbom_path: Path, out_dir: Path, image: str) -> Path:
+        assert sbom_path.is_file()
+        output = out_dir / "raw" / f"{name}.json"
+        output.parent.mkdir(exist_ok=True)
+        shutil.copyfile(fixtures / f"{name}.sample.json", output)
+        return output
 
-        return run
+    return run
+
+
+def test_p2_parsers_merge_real_fixture_findings(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from guardian.scanners import grype, osv
 
     target = tmp_path / "target"
     target.mkdir()
     output = tmp_path / "out"
-    monkeypatch.setattr(grype, "run_grype", fixture_run("grype"))
-    monkeypatch.setattr(osv, "run_osv", fixture_run("osv"))
-    graph = ModuleType("guardian.graph")
+    monkeypatch.setattr(grype, "run_grype", _fixture_run("grype"))
+    monkeypatch.setattr(osv, "run_osv", _fixture_run("osv"))
     purl = "pkg:gem/actionmailbox@8.0.4"
     path = ["app", "direct", "bom-actionmailbox"]
-    graph.shortest_path = lambda graph, component: path if component == path[-1] else None
-    graph.path_count = lambda graph, component: 2
+    graph = _fake_graph_module(
+        lambda graph, component: path if component == path[-1] else None,
+        lambda graph, component: 2,
+    )
     monkeypatch.setitem(sys.modules, "guardian.graph", graph)
 
-    def inventory(context):
+    def inventory(context: ScanContext) -> None:
         _inventory(context)
         context.graph = object()
-        context.result.graph.nodes.append(Component(
-            component_id=path[-1], purl=purl, name="actionmailbox", ecosystem="gem",
-        ))
+        context.result.graph.nodes.append(
+            Component(
+                component_id=path[-1],
+                purl=purl,
+                name="actionmailbox",
+                ecosystem="gem",
+            )
+        )
 
     monkeypatch.setattr(runner, "_inventory", inventory)
     monkeypatch.setattr(runner, "_detectors", lambda context: None)
@@ -129,18 +165,21 @@ def test_p2_parsers_merge_real_fixture_findings(monkeypatch, tmp_path):
     assert result.scan.db_built_at["osv"].startswith("live api.osv.dev")
     assert (output / "report.html").is_file()
 
-def test_cache_reuses_clean_checkout_and_invalidates_changed_lockfile(monkeypatch, tmp_path):
+
+def test_cache_reuses_clean_checkout_and_invalidates_changed_lockfile(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     target = tmp_path / "target"
     target.mkdir()
     lockfile = target / "package-lock.json"
     lockfile.write_text("first", encoding="utf-8")
     out = tmp_path / "scan"
-    scans = []
+    scans: list[str] = []
 
-    def git(path, *args):
+    def git(path: Path, *args: str) -> str:
         return "1" * 40 if args[0] == "rev-parse" else ""
 
-    def inventory(context):
+    def inventory(context: ScanContext) -> None:
         scans.append(context.result.scan.scan_id)
         _inventory(context)
 
@@ -162,25 +201,27 @@ def test_cache_reuses_clean_checkout_and_invalidates_changed_lockfile(monkeypatc
     assert len(scans) == 2
 
 
-def test_paths_preserve_exact_bom_ids_and_skip_ambiguous_purls(monkeypatch, tmp_path):
+def test_paths_preserve_exact_bom_ids_and_skip_ambiguous_purls(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     context, _ = runner._prepare(tmp_path, tmp_path / "output", None, False, None)
     context.graph = object()
-    context.result.graph = GraphArtifact(nodes=[
-        Component(component_id="copy-a", purl="pkg:npm/lib@1", name="lib"),
-        Component(component_id="copy-b", purl="pkg:npm/lib@1", name="lib"),
-        Component(component_id="unreachable", purl="pkg:npm/other@1", name="other"),
-    ])
-    graph = ModuleType("guardian.graph")
-    graph.shortest_path = lambda _, component: (
-        ["app", component] if component != "unreachable" else None
+    context.result.graph = GraphArtifact(
+        nodes=[
+            Component(component_id="copy-a", purl="pkg:npm/lib@1", name="lib"),
+            Component(component_id="copy-b", purl="pkg:npm/lib@1", name="lib"),
+            Component(component_id="unreachable", purl="pkg:npm/other@1", name="other"),
+        ]
     )
-    graph.path_count = lambda _, component: 1
+    graph = _fake_graph_module(
+        lambda _, component: ["app", component] if component != "unreachable" else None,
+        lambda _, component: 1,
+    )
     monkeypatch.setitem(sys.modules, "guardian.graph", graph)
     findings = [
-        Finding(finding_id="a", kind="vulnerability", component_id="copy-a", purl="pkg:npm/lib@1"),
-        Finding(finding_id="b", kind="vulnerability", component_id="unknown", purl="pkg:npm/lib@1"),
-        Finding(finding_id="c", kind="vulnerability", component_id="unreachable",
-                purl="pkg:npm/other@1"),
+        Finding(finding_id="a", kind=VULN, component_id="copy-a", purl="pkg:npm/lib@1"),
+        Finding(finding_id="b", kind=VULN, component_id="unknown", purl="pkg:npm/lib@1"),
+        Finding(finding_id="c", kind=VULN, component_id="unreachable", purl="pkg:npm/other@1"),
     ]
     exact, ambiguous, unreachable = runner._paths(context, findings)
     assert exact.dependency_path == ["app", "copy-a"]
