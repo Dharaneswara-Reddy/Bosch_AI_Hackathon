@@ -278,7 +278,11 @@ def test_parent_lookup_handles_a_single_match_and_unusable_output() -> None:
     single = FakeRunner(CommandResult(0, json.dumps(
         {"version": "2.0.0", "dependencies.jws": "^3.2.3"})))
     assert npm_parent_lookup(single)("p", "1.0.0", "jws", "3.2.3") == "2.0.0"
-    for result in (CommandResult(1, "E404"), CommandResult(0, "not json"), CommandResult(0, "[]")):
+    plain_versions = CommandResult(0, '["0.2.0", "0.2.1"]')
+    error_object = CommandResult(0, '{"error": {"code": "E404"}}')
+    unusable = (CommandResult(1, "E404"), CommandResult(0, "not json"), CommandResult(0, "[]"),
+                plain_versions, error_object)
+    for result in unusable:
         assert npm_parent_lookup(FakeRunner(result))("p", "1.0.0", "jws", "3.2.3") is None
 
 

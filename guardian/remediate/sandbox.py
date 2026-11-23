@@ -254,7 +254,7 @@ def npm_parent_lookup(run: Runner) -> ParentLookup:
             return None
         found = [
             row["version"] for row in (rows if isinstance(rows, list) else [rows])
-            if "-" not in row["version"]
+            if isinstance(row, dict) and "version" in row and "-" not in row["version"]
             and version_key(str(row.get(field, "0"))) >= version_key(fixed)
         ]
         return min(found, key=version_key) if found else None
