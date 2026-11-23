@@ -47,8 +47,16 @@ from guardian.risk import assess
 from guardian.tools import ToolError
 
 LOCKFILES = {
-    "Cargo.lock", "Gemfile.lock", "go.mod", "go.sum", "package-lock.json",
-    "npm-shrinkwrap.json", "pnpm-lock.yaml", "poetry.lock", "uv.lock", "yarn.lock",
+    "Cargo.lock",
+    "Gemfile.lock",
+    "go.mod",
+    "go.sum",
+    "package-lock.json",
+    "npm-shrinkwrap.json",
+    "pnpm-lock.yaml",
+    "poetry.lock",
+    "uv.lock",
+    "yarn.lock",
 }
 OUTPUT_FILES = ("run.json", "graph.json", "findings.json", "coverage.json")
 IMAGE_REF = re.compile(r"[a-zA-Z0-9._:/-]+@sha256:[a-f0-9]{64}")
@@ -105,7 +113,9 @@ def _checkpoint(context: ScanContext) -> None:
     result = context.result
     result.evidence = context.evidence.records()
     findings = FindingsArtifact(
-        findings=result.findings, evidence=result.evidence, claims=result.claims,
+        findings=result.findings,
+        evidence=result.evidence,
+        claims=result.claims,
     )
     artifacts = (result.scan, result.graph, findings, result.coverage)
     for filename, data in zip(OUTPUT_FILES, artifacts, strict=True):
@@ -123,8 +133,11 @@ def _module(name: str) -> ModuleType:
 
 
 def _attempt(
-    context: ScanContext, name: str, action: Callable[[ScanContext], None],
-    *, optional: bool = False,
+    context: ScanContext,
+    name: str,
+    action: Callable[[ScanContext], None],
+    *,
+    optional: bool = False,
 ) -> bool:
     try:
         action(context)
@@ -171,16 +184,20 @@ def _normalize_graph(path: Path, sbom: Path, graph: object) -> GraphArtifact:
     nodes = [
         Component(
             component_id=component.ref or component.purl,
-            purl=component.purl, name=component.name, version=component.version,
+            purl=component.purl,
+            name=component.name,
+            version=component.version,
             ecosystem=component.purl.removeprefix("pkg:").split("/", 1)[0],
             scope=Scope.UNKNOWN,
         )
-        for component in bom.components if component.ref or component.purl != UNKNOWN
+        for component in bom.components
+        if component.ref or component.purl != UNKNOWN
     ]
     edge_rows = getattr(graph, "edges")(data=True)  # noqa: B009 - graph is typed as object
     edges = [
         Edge(
-            parent_id=str(parent), child_id=str(child),
+            parent_id=str(parent),
+            child_id=str(child),
             edge_source=attrs.get("edge_source", "sbom"),
         )
         for parent, child, attrs in edge_rows
@@ -213,7 +230,6 @@ def _database_date(context: ScanContext, name: str, evidence: list[Evidence]) ->
     elif configured != UNKNOWN:
         date = configured
     elif name == "osv":
-        # OSV-Scanner has no local database; it queries api.osv.dev during the scan.
         date = f"live api.osv.dev at {datetime.now(UTC).isoformat(timespec='seconds')}"
     else:
         date = UNKNOWN
@@ -278,6 +294,7 @@ def _scanners(context: ScanContext) -> None:
         raise RuntimeError("Scanner checks require the SBOM artifact.")
     batches: list[list[Finding]] = []
     for name in ("grype", "osv"):
+
         def apply(active: ScanContext, scanner: str = name) -> None:
             batches.append(_scan_advisories(active, scanner))
 
@@ -305,10 +322,14 @@ def _detectors(context: ScanContext) -> None:
                 active.coverage_rows.extend(rows)
 
             if not _attempt(context, f"detector:{key}:{name}", apply):
-                context.coverage_rows.append(CoverageRow(
-                    detector=name, ecosystem=key, status=CoverageStatus.ERROR,
-                    reason=context.result.scan.errors[f"detector:{key}:{name}"],
-                ))
+                context.coverage_rows.append(
+                    CoverageRow(
+                        detector=name,
+                        ecosystem=key,
+                        status=CoverageStatus.ERROR,
+                        reason=context.result.scan.errors[f"detector:{key}:{name}"],
+                    )
+                )
 
 
 def _classify(context: ScanContext) -> None:
@@ -344,7 +365,11 @@ def _git(target: Path, *args: str) -> str | None:
     try:
         completed = subprocess.run(
             ["git", "-c", "core.fsmonitor=false", *args],
-            cwd=target, capture_output=True, check=True, text=True, timeout=10,
+            cwd=target,
+            capture_output=True,
+            check=True,
+            text=True,
+            timeout=10,
             env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"},
         )
     except (OSError, subprocess.SubprocessError, UnicodeError):
@@ -357,7 +382,8 @@ def _lockfile_hash(target: Path) -> str:
     count = 0
     for directory, folders, files in os.walk(target):
         folders[:] = sorted(
-            name for name in folders
+            name
+            for name in folders
             if not name.startswith(".") and name not in {"node_modules", "artifacts", "venv"}
         )
         for name in sorted(LOCKFILES.intersection(files)):
@@ -372,8 +398,11 @@ def _lockfile_hash(target: Path) -> str:
 def _cache(context: ScanContext, clean_commit: bool) -> RunResult | None:
     wanted = context.result.scan
     if (
-        not clean_commit or wanted.lockfile_hash == UNKNOWN or context.baseline is not None
-        or context.inject_claim is not None or context.settings.provider != "none"
+        not clean_commit
+        or wanted.lockfile_hash == UNKNOWN
+        or context.baseline is not None
+        or context.inject_claim is not None
+        or context.settings.provider != "none"
         or not {"syft", "grype", "osv"} <= wanted.scanner_versions.keys()
         or not {"grype", "osv"} <= wanted.db_built_at.keys()
     ):
@@ -382,7 +411,8 @@ def _cache(context: ScanContext, clean_commit: bool) -> RunResult | None:
         previous = Scan.model_validate_json(_read(context.out / "run.json"))
         fields = ("target", "commit_sha", "lockfile_hash", "scanner_versions", "db_built_at")
         if (
-            previous.status != ScanStatus.COMPLETE or previous.ended_at is None
+            previous.status != ScanStatus.COMPLETE
+            or previous.ended_at is None
             or previous.llm_status != LlmStatus.UNAVAILABLE
             or not context.sbom.is_file()
             or any(getattr(previous, field) != getattr(wanted, field) for field in fields)
@@ -411,7 +441,10 @@ def _cache(context: ScanContext, clean_commit: bool) -> RunResult | None:
 
 
 def _prepare(
-    target: Path | str, out: Path, baseline: Path | None, use_llm: bool,
+    target: Path | str,
+    out: Path,
+    baseline: Path | None,
+    use_llm: bool,
     inject_claim: Path | None,
 ) -> tuple[ScanContext, bool]:
     candidate = Path(target).resolve()
@@ -439,8 +472,12 @@ def _prepare(
     start = datetime.now(UTC)
     record = Scan(
         scan_id=f"{start:%Y%m%dT%H%M%SZ}-{uuid4().hex[:8]}",
-        target=str(local), commit_sha=commit, lockfile_hash=lock_hash,
-        started_at=start, scanner_versions=settings.tool_images, db_built_at=settings.db_built_at,
+        target=str(local),
+        commit_sha=commit,
+        lockfile_hash=lock_hash,
+        started_at=start,
+        scanner_versions=settings.tool_images,
+        db_built_at=settings.db_built_at,
     )
     result = RunResult(scan=record)
     claim_file = inject_claim.resolve(strict=True) if inject_claim else None
@@ -449,8 +486,12 @@ def _prepare(
 
 
 def scan(
-    target: Path | str, out: Path, baseline: Path | None = None, use_llm: bool = True,
-    *, inject_claim: Path | None = None,
+    target: Path | str,
+    out: Path,
+    baseline: Path | None = None,
+    use_llm: bool = True,
+    *,
+    inject_claim: Path | None = None,
 ) -> RunResult:
     """Scan a local checkout or digest-pinned image and write run artifacts."""
     context, clean_commit = _prepare(target, out, baseline, use_llm, inject_claim)
@@ -487,7 +528,9 @@ def _scan_context(context: ScanContext, clean_commit: bool, use_llm: bool) -> Ru
     (context.out / "graph.json").unlink(missing_ok=True)
     _write_model(context.out / "run.json", context.result.scan)
     for name, action in (
-        ("inventory", _inventory), ("scanners", _scanners), ("detectors", _detectors),
+        ("inventory", _inventory),
+        ("scanners", _scanners),
+        ("detectors", _detectors),
         ("risk", _classify),
     ):
         _attempt(context, name, action)
