@@ -1,19 +1,27 @@
-"""Detector registry and public result type."""
+"""Ecosystem-aware detector registry and public result type."""
 
-from guardian.detectors import ci_pin, git_diff, image_pin, install_script, sbom_diff, typosquat
 from guardian.detectors._common import DetectionResult
+from guardian.detectors.plugins import (
+    DetectorPlugin,
+    _run_ci_pin,
+    _run_git_diff,
+    _run_image_pin,
+    _run_install_script,
+    _run_sbom_diff,
+    _run_typosquat,
+)
 
-DETECTORS = {
-    "any": {
-        "sbom_diff": sbom_diff.detect,
-        "git_diff": git_diff.detect,
-        "image_pin": image_pin.detect,
-        "ci_pin": ci_pin.detect,
-    },
-    "npm": {
-        "typosquat": typosquat.detect,
-        "install_script": install_script.detect,
-    },
+DETECTORS: dict[str, list[DetectorPlugin]] = {
+    "any": [
+        DetectorPlugin("sbom_diff", _run_sbom_diff),
+        DetectorPlugin("git_diff", _run_git_diff),
+        DetectorPlugin("image_pin", _run_image_pin),
+        DetectorPlugin("ci_pin", _run_ci_pin),
+    ],
+    "npm": [
+        DetectorPlugin("typosquat", _run_typosquat),
+        DetectorPlugin("install_script", _run_install_script),
+    ],
 }
 
-__all__ = ["DETECTORS", "DetectionResult"]
+__all__ = ["DETECTORS", "DetectionResult", "DetectorPlugin"]

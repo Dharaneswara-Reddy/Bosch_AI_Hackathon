@@ -8,7 +8,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from guardian.models import UNKNOWN, CoverageRow, Evidence, Finding, finding_id
 
@@ -24,6 +24,22 @@ class DetectionResult:
     coverage: list[CoverageRow] = field(default_factory=list)
     finding_details: dict[str, JsonObject] = field(default_factory=dict)
     artifacts: dict[str, bytes] = field(default_factory=dict)
+
+    @property
+    def coverage_rows(self) -> list[CoverageRow]:
+        """Expose the coverage name expected by the shared runner."""
+        return self.coverage
+
+
+class DetectorContext(Protocol):
+    """Structural view of the shared runner context required by plugins."""
+
+    target_path: Path | None
+    sbom: Path
+    baseline: Path | None
+    out: Path
+    result: Any
+    evidence: Any
 
 
 def read_value(value: Any, key: str, default: Any = None) -> Any:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 from guardian.detectors import DETECTORS
 from guardian.detectors.ci_pin import detect as detect_ci_pins
@@ -11,6 +12,8 @@ from guardian.detectors.image_pin import detect as detect_image_pins
 from guardian.detectors.install_script import detect as detect_install_scripts
 from guardian.detectors.sbom_diff import detect as detect_sbom_diff
 from guardian.detectors.typosquat import detect as detect_typosquats
+from guardian.evidence import EvidenceStore
+from guardian.models import Component, GraphArtifact
 
 
 def _component(name: str, version: str, *, scope: str = "transitive") -> dict[str, str]:
@@ -290,9 +293,64 @@ def test_ci_pin_full_sha_only_passes(tmp_path: Path) -> None:
 def test_registry_covers_each_detector_for_any_and_npm() -> None:
     expected = {"sbom_diff", "git_diff", "typosquat", "install_script", "image_pin", "ci_pin"}
 
-    assert set(DETECTORS["any"]) >= {"sbom_diff", "git_diff", "image_pin", "ci_pin"}
-    assert set(DETECTORS["npm"]) >= {"typosquat", "install_script"}
-    assert {name for detectors in DETECTORS.values() for name in detectors} >= expected
+    assert {plugin.name for plugin in DETECTORS["any"]} >= {
+        "sbom_diff",
+        "git_diff",
+        "image_pin",
+        "ci_pin",
+    }
+    assert {plugin.name for plugin in DETECTORS["npm"]} >= {"typosquat", "install_script"}
+    assert {plugin.name for plugins in DETECTORS.values() for plugin in plugins} >= expected
+
+
+def test_registry_plugin_matches_runner_interface_and_records_evidence(tmp_path: Path) -> None:
+    target = tmp_path / "target"
+    target.mkdir()
+    out = tmp_path / "run"
+    (out / "raw").mkdir(parents=True)
+    sbom = {
+        "components": [
+            {
+                "component_id": "pkg:npm/ngy-cookie@1.0.0",
+                "purl": "pkg:npm/ngy-cookie@1.0.0",
+                "name": "ngy-cookie",
+                "version": "1.0.0",
+                "ecosystem": "npm",
+                "scope": "direct",
+            }
+        ]
+    }
+    sbom_path = out / "sbom.cdx.json"
+    sbom_path.write_text(json.dumps(sbom), encoding="utf-8")
+    graph = GraphArtifact(
+        nodes=[
+            Component(
+                component_id="pkg:npm/ngy-cookie@1.0.0",
+                purl="pkg:npm/ngy-cookie@1.0.0",
+                name="ngy-cookie",
+                version="1.0.0",
+                ecosystem="npm",
+                scope="direct",
+            )
+        ]
+    )
+    context = SimpleNamespace(
+        target_path=target,
+        sbom=sbom_path,
+        baseline=None,
+        out=out,
+        result=SimpleNamespace(graph=graph),
+        evidence=EvidenceStore(out),
+    )
+    plugin = next(item for item in DETECTORS["npm"] if item.name == "typosquat")
+
+    result = plugin.run(context)
+
+    assert result.findings[0].anomaly_type == "suspected_typosquat"
+    assert result.coverage_rows[0].status == "finding"
+    records = context.evidence.records()
+    assert {record.evidence_id for record in records} >= set(result.findings[0].evidence_ids)
+    assert all((out / record.file).is_file() for record in records)
 
 
 def _git(path: Path, *args: str) -> subprocess.CompletedProcess[str]:
