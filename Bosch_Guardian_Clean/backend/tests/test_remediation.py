@@ -80,7 +80,6 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
         return result
 
     monkeypatch.setattr(remediation, "fix_deps", lambda: FixDeps(command, scan, None))
-    monkeypatch.setattr(remediation, "CHECKPOINTER", remediation.MemorySaver())
     return TestClient(main.app)
 
 
@@ -136,3 +135,14 @@ def test_error_responses_are_actionable(client: TestClient) -> None:
     assert early.status_code == 409 and "start" in early.json()["detail"]
     invalid = client.post(f"{base}/rule-f1/decision", json={"approved": True, "reviewer": ""})
     assert invalid.status_code == 422
+
+
+def test_a_pending_approval_survives_a_backend_restart(client: TestClient) -> None:
+    base = f"/scan/{SCAN_ID}/fixes/rule-f1"
+    client.post(f"{base}/start")
+    remediation.close_checkpointers()
+
+    decided = client.post(f"{base}/decision", json={"approved": True, "reviewer": "ana"})
+
+    assert decided.status_code == 200
+    assert _fixes(client)["rule-f1"]["status"] == "verified"

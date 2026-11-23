@@ -5,12 +5,14 @@ the sandbox until it is resumed with an approving ``Decision``.
 """
 
 import shutil
+import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TypedDict
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
+from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command, interrupt
@@ -58,6 +60,12 @@ class FixDeps:
     runner: Runner = run_command
     scan: ScanFn = scan_without_ai
     engine: str | None = field(default_factory=find_engine)
+
+
+def open_checkpointer(path: Path) -> SqliteSaver:
+    """A file-backed checkpointer: a fix waiting for approval survives a server restart."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return SqliteSaver(sqlite3.connect(path, check_same_thread=False))
 
 
 def _thread(scan_id: str, proposal_id: str) -> Any:

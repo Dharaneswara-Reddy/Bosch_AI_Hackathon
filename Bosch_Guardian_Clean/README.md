@@ -46,8 +46,10 @@ Tests: `pytest` from the repository root (guardian) and from `Bosch_Guardian_Cle
    `npm install --package-lock-only --ignore-scripts` (retry with `--legacy-peer-deps`).
 3. `guardian.runner.scan(repo_dir, out_dir, use_llm=False)`.
 
-Scans live in `GUARDIAN_SCAN_DIR` (default: a fresh temporary directory) and in memory; both are
-lost on restart.
+Scans live in `GUARDIAN_SCAN_DIR` (default: a fresh temporary directory). Each scan keeps a
+`record.json`, and pending fix approvals are checkpointed in `checkpoints.sqlite` next to the scan
+folders; both are reloaded on restart (a scan that was still running is marked failed). With the
+default temporary directory nothing survives a restart, so set `GUARDIAN_SCAN_DIR` to keep state.
 
 ## API
 
