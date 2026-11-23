@@ -1,0 +1,101 @@
+{
+  "$defs": {
+    "CoverageRow": {
+      "properties": {
+        "detector": {
+          "title": "Detector",
+          "type": "string"
+        },
+        "ecosystem": {
+          "title": "Ecosystem",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/CoverageStatus"
+        },
+        "reason": {
+          "default": "",
+          "title": "Reason",
+          "type": "string"
+        },
+        "components_seen": {
+          "default": 0,
+          "title": "Components Seen",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "detector",
+        "ecosystem",
+        "status"
+      ],
+      "title": "CoverageRow",
+      "type": "object"
+    },
+    "CoverageStatus": {
+      "enum": [
+        "finding",
+        "pass",
+        "n/a",
+        "not_covered",
+        "error"
+      ],
+      "title": "CoverageStatus",
+      "type": "string"
+    },
+    "EcosystemCoverage": {
+      "properties": {
+        "components": {
+          "minimum": 0,
+          "title": "Components",
+          "type": "integer"
+        },
+        "resolver_percent": {
+          "maximum": 100.0,
+          "minimum": 0.0,
+          "title": "Resolver Percent",
+          "type": "number"
+        },
+        "scanner_percent": {
+          "maximum": 100.0,
+          "minimum": 0.0,
+          "title": "Scanner Percent",
+          "type": "number"
+        }
+      },
+      "required": [
+        "components",
+        "resolver_percent",
+        "scanner_percent"
+      ],
+      "title": "EcosystemCoverage",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "rows": {
+      "items": {
+        "$ref": "#/$defs/CoverageRow"
+      },
+      "title": "Rows",
+      "type": "array"
+    },
+    "ecosystems": {
+      "additionalProperties": {
+        "$ref": "#/$defs/EcosystemCoverage"
+      },
+      "title": "Ecosystems",
+      "type": "object"
+    },
+    "warnings": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Warnings",
+      "type": "array"
+    }
+  },
+  "title": "CoverageArtifact",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

@@ -1,0 +1,397 @@
+{
+  "$defs": {
+    "AgentClaim": {
+      "properties": {
+        "claim_id": {
+          "title": "Claim Id",
+          "type": "string"
+        },
+        "step": {
+          "title": "Step",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "evidence_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence Ids",
+          "type": "array"
+        },
+        "kind": {
+          "$ref": "#/$defs/ClaimKind"
+        },
+        "validated": {
+          "default": false,
+          "title": "Validated",
+          "type": "boolean"
+        },
+        "rejected_reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rejected Reason"
+        },
+        "uncertainty": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Uncertainty"
+        }
+      },
+      "required": [
+        "claim_id",
+        "step",
+        "text",
+        "kind"
+      ],
+      "title": "AgentClaim",
+      "type": "object"
+    },
+    "ClaimKind": {
+      "enum": [
+        "evidence",
+        "inference"
+      ],
+      "title": "ClaimKind",
+      "type": "string"
+    },
+    "Confidence": {
+      "enum": [
+        "high",
+        "medium",
+        "low"
+      ],
+      "title": "Confidence",
+      "type": "string"
+    },
+    "Evidence": {
+      "properties": {
+        "evidence_id": {
+          "title": "Evidence Id",
+          "type": "string"
+        },
+        "tool": {
+          "title": "Tool",
+          "type": "string"
+        },
+        "tool_version": {
+          "title": "Tool Version",
+          "type": "string"
+        },
+        "file": {
+          "title": "File",
+          "type": "string"
+        },
+        "pointer": {
+          "default": "",
+          "title": "Pointer",
+          "type": "string"
+        },
+        "sha256": {
+          "title": "Sha256",
+          "type": "string"
+        },
+        "url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Url"
+        },
+        "collected_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Collected At"
+        },
+        "db_built_at": {
+          "default": "UNKNOWN",
+          "title": "Db Built At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "evidence_id",
+        "tool",
+        "tool_version",
+        "file",
+        "sha256"
+      ],
+      "title": "Evidence",
+      "type": "object"
+    },
+    "Finding": {
+      "properties": {
+        "finding_id": {
+          "title": "Finding Id",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/FindingKind"
+        },
+        "component_id": {
+          "title": "Component Id",
+          "type": "string"
+        },
+        "purl": {
+          "title": "Purl",
+          "type": "string"
+        },
+        "advisory_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Advisory Id"
+        },
+        "aliases": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Aliases",
+          "type": "array"
+        },
+        "anomaly_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Anomaly Type"
+        },
+        "confirmed_by": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Confirmed By",
+          "type": "array"
+        },
+        "source_severity": {
+          "default": "UNKNOWN",
+          "title": "Source Severity",
+          "type": "string"
+        },
+        "severities": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Severities",
+          "type": "object"
+        },
+        "fixed_versions": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Fixed Versions",
+          "type": "array"
+        },
+        "match_basis": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/MatchBasis"
+            }
+          ],
+          "default": "unknown"
+        },
+        "dependency_path": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Dependency Path",
+          "type": "array"
+        },
+        "path_count": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Path Count"
+        },
+        "evidence_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence Ids",
+          "type": "array"
+        },
+        "state": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/FindingState"
+            }
+          ],
+          "default": "affected"
+        },
+        "risk_level": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/RiskLevel"
+            }
+          ],
+          "default": "unknown"
+        },
+        "risk_rule_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Risk Rule Id"
+        },
+        "confidence": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Confidence"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "image_tag": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Image Tag"
+        },
+        "risk_note": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Risk Note"
+        }
+      },
+      "required": [
+        "finding_id",
+        "kind",
+        "component_id",
+        "purl"
+      ],
+      "title": "Finding",
+      "type": "object"
+    },
+    "FindingKind": {
+      "enum": [
+        "vulnerability",
+        "malicious",
+        "anomaly"
+      ],
+      "title": "FindingKind",
+      "type": "string"
+    },
+    "FindingState": {
+      "enum": [
+        "affected",
+        "not_affected",
+        "under_investigation"
+      ],
+      "title": "FindingState",
+      "type": "string"
+    },
+    "MatchBasis": {
+      "enum": [
+        "purl",
+        "cpe",
+        "unknown"
+      ],
+      "title": "MatchBasis",
+      "type": "string"
+    },
+    "RiskLevel": {
+      "enum": [
+        "critical",
+        "high",
+        "medium",
+        "low",
+        "unknown"
+      ],
+      "title": "RiskLevel",
+      "type": "string"
+    }
+  },
+  "properties": {
+    "findings": {
+      "items": {
+        "$ref": "#/$defs/Finding"
+      },
+      "title": "Findings",
+      "type": "array"
+    },
+    "evidence": {
+      "items": {
+        "$ref": "#/$defs/Evidence"
+      },
+      "title": "Evidence",
+      "type": "array"
+    },
+    "claims": {
+      "items": {
+        "$ref": "#/$defs/AgentClaim"
+      },
+      "title": "Claims",
+      "type": "array"
+    }
+  },
+  "title": "FindingsArtifact",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

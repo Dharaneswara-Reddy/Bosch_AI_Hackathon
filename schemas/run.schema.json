@@ -1,0 +1,189 @@
+{
+  "$defs": {
+    "LlmStatus": {
+      "enum": [
+        "ok",
+        "unavailable",
+        "failed"
+      ],
+      "title": "LlmStatus",
+      "type": "string"
+    },
+    "Resolution": {
+      "enum": [
+        "lockfile",
+        "resolved",
+        "image",
+        "manifest-only"
+      ],
+      "title": "Resolution",
+      "type": "string"
+    },
+    "ScanStatus": {
+      "enum": [
+        "complete",
+        "partial",
+        "failed"
+      ],
+      "title": "ScanStatus",
+      "type": "string"
+    },
+    "ToolRun": {
+      "properties": {
+        "tool": {
+          "title": "Tool",
+          "type": "string"
+        },
+        "command": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Command",
+          "type": "array"
+        },
+        "exit_code": {
+          "title": "Exit Code",
+          "type": "integer"
+        },
+        "duration_s": {
+          "minimum": 0.0,
+          "title": "Duration S",
+          "type": "number"
+        },
+        "file": {
+          "title": "File",
+          "type": "string"
+        },
+        "sha256": {
+          "title": "Sha256",
+          "type": "string"
+        },
+        "tool_version": {
+          "default": "UNKNOWN",
+          "title": "Tool Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tool",
+        "command",
+        "exit_code",
+        "duration_s",
+        "file",
+        "sha256"
+      ],
+      "title": "ToolRun",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "scan_id": {
+      "title": "Scan Id",
+      "type": "string"
+    },
+    "target": {
+      "title": "Target",
+      "type": "string"
+    },
+    "commit_sha": {
+      "default": "UNKNOWN",
+      "title": "Commit Sha",
+      "type": "string"
+    },
+    "lockfile_hash": {
+      "default": "UNKNOWN",
+      "title": "Lockfile Hash",
+      "type": "string"
+    },
+    "resolution": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/Resolution"
+        }
+      ],
+      "default": "manifest-only"
+    },
+    "scanner_versions": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Scanner Versions",
+      "type": "object"
+    },
+    "db_built_at": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Db Built At",
+      "type": "object"
+    },
+    "started_at": {
+      "format": "date-time",
+      "title": "Started At",
+      "type": "string"
+    },
+    "ended_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Ended At"
+    },
+    "status": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/ScanStatus"
+        }
+      ],
+      "default": "partial"
+    },
+    "llm_status": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/LlmStatus"
+        }
+      ],
+      "default": "unavailable"
+    },
+    "tools": {
+      "items": {
+        "$ref": "#/$defs/ToolRun"
+      },
+      "title": "Tools",
+      "type": "array"
+    },
+    "errors": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Errors",
+      "type": "object"
+    },
+    "cached_age_minutes": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Cached Age Minutes"
+    }
+  },
+  "required": [
+    "scan_id",
+    "target",
+    "started_at"
+  ],
+  "title": "Scan",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}
