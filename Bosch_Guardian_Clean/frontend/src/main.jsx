@@ -44,7 +44,8 @@ function useScan(scanId, onError) {
     poll();
     return () => { cancelled = true; clearTimeout(timer); };
   }, [scanId]);
-  return {status, result, graph, reset: () => { setStatus(null); setResult(null); setGraph(null); }};
+  const refresh = () => request(`/scan/${scanId}/result`).then(setResult).catch(e => onError(e.message));
+  return {status, result, graph, refresh, reset: () => { setStatus(null); setResult(null); setGraph(null); }};
 }
 
 function App() {
@@ -55,7 +56,7 @@ function App() {
   const [error, setError] = useState('');
   const [health, setHealth] = useState(false);
   const [ai, setAi] = useState('off');
-  const {status, result, graph, reset} = useScan(scanId, setError);
+  const {status, result, graph, refresh, reset} = useScan(scanId, setError);
   useEffect(() => { request('/health').then(h => { setHealth(true); setAi(h.ai || 'off'); }).catch(() => setHealth(false)); }, []);
   const busy = Boolean(scanId) && (!status || status.status === 'running');
 
@@ -94,7 +95,7 @@ function App() {
           Hallucination test: inject a fabricated CVE claim and show the validator rejecting it</label></section>
         {error && <div className="notice error"><AlertTriangle size={19}/><div><strong>Scan problem</strong><p>{error}</p></div><button onClick={() => setError('')} aria-label="Dismiss">×</button></div>}
         {busy && <div className="notice progress"><LoaderCircle className="spin" size={19}/><div><strong>Analyzing repository</strong><p>{STAGES[status?.stage] || 'Starting'}… this can take a few minutes.</p></div></div>}
-        {result && status ? <Results scanId={scanId} status={status} result={result} graph={graph}/> :
+        {result && status ? <Results scanId={scanId} status={status} result={result} graph={graph} onDecided={refresh}/> :
           !busy && <section className="empty-panel"><div className="empty-illustration"><GitBranch size={30}/></div><h2>Start with a repository.</h2><p>Results show vulnerabilities with dependency paths, anomalies and detector coverage.</p></section>}
       </div></main></div>;
 }
