@@ -79,3 +79,18 @@ def test_findings_are_matched_across_versions_by_advisory_and_package() -> None:
     assert changes.new_findings == ["new-c", "new-an"]
     assert [(r.finding, r.package) for r in changes.resolved_findings] == [("CVE-2", "b")]
     assert changes.new_anomalies == 1
+
+
+def test_non_package_nodes_are_not_reported_as_added() -> None:
+    current = graph(("a", "1.0.0"))
+    current.nodes.append(
+        Component(
+            component_id="wf",
+            purl="UNKNOWN",
+            name="/.github/workflows/ci.yml",
+            version="UNKNOWN",
+            ecosystem="UNKNOWN",
+        )
+    )
+    changes = compute_changes(graph(("a", "1.0.0")), current, [], [], "v1", "abc1234")
+    assert changes.added == []
