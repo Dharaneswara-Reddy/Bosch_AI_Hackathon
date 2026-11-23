@@ -54,7 +54,7 @@ htmlcov/
 .ruff_cache/
 
 # Node / Web (if applicable)
-node_modules/
+node_modules
 .next/
 out/
 
