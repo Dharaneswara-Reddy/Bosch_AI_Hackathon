@@ -11,6 +11,7 @@ from guardian.models import (
     Finding,
     FindingKind,
     FindingsArtifact,
+    SsvcDecision,
 )
 from guardian.report.render import render
 from tests.test_relevance import APP, _demo_run
@@ -87,3 +88,26 @@ def test_report_explains_entry_paths_relevance_and_synthetic_label(tmp_path: Pat
     markdown = (out / "report.md").read_text()
     assert "introduced by express-jwt" in markdown
     assert "### relevant: GHSA-jsonwebtoken" in markdown
+
+
+def test_report_shows_decision_score_reasons_confidence_and_review_tag(tmp_path: Path) -> None:
+    out = _write_run(tmp_path)
+    artifacts = FindingsArtifact.model_validate_json((out / "findings.json").read_text())
+    first = artifacts.findings[0].model_copy(update={
+        "ssvc_decision": SsvcDecision.ACT, "risk_score": 91, "confidence_score": 0.47,
+        "risk_reasons": ["in CISA KEV", "EPSS 0.33 (98th percentile)"],
+        "review_required": True,
+        "review_reasons": ["confidence 0.47 is below the 0.60 review threshold"],
+    })
+    artifacts.findings[0] = first
+    (out / "findings.json").write_text(artifacts.model_dump_json())
+    render(out)
+    html = (out / "report.html").read_text()
+    assert "Decision <strong>Act</strong>" in html
+    assert "Score 91/100" in html and "Confidence 0.47" in html
+    assert "in CISA KEV" in html and "EPSS 0.33 (98th percentile)" in html
+    assert "needs human review" in html
+    assert "confidence 0.47 is below the 0.60 review threshold" in html
+    markdown = (out / "report.md").read_text()
+    assert "Decision **Act**" in markdown and "needs human review" in markdown
+    assert "EPSS 0.33 \\(98th percentile\\)" in markdown

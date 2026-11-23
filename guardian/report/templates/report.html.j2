@@ -32,6 +32,7 @@ code,pre { white-space:pre-wrap; overflow-wrap:anywhere }
 .r-medium { background:#fdf0d5; color:#7a4a00 } .r-low { background:#e3f3e8; color:#1d5e33 }
 .tag { display:inline-block; padding:.05rem .45rem; border-radius:1rem; font-size:.72rem; font-weight:650; background:#eef2f6; color:#33475e }
 .tag.ai { background:#ede9fe; color:#5b21b6 }
+.tag.review { background:#fde2df; color:#8e1d12 }
 .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(8rem,1fr)); gap:.6rem; margin:1rem 0 0 }
 .card { background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.18); border-radius:.5rem; padding:.55rem .8rem }
 .card span { display:block; font-size:.72rem; letter-spacing:.06em; text-transform:uppercase; opacity:.75 }
@@ -90,8 +91,12 @@ details.finding-row > summary { display:flex; flex-wrap:wrap; gap:.4rem .7rem; a
 {% endfor %}
 </ul>{% else %}<p>Evidence unavailable.</p>{% endif %}
 {% endmacro %}
+{% set decisions = {"act": "Act", "attend": "Attend", "track_star": "Track*", "track": "Track"} %}
 {% macro risk(finding) %}
 <p>Risk <strong>{{ finding.risk_level or "UNKNOWN" }}</strong> · Rule {{ finding.risk_rule_id or "UNKNOWN" }} · Confidence {{ finding.confidence or "UNKNOWN" }} · State {{ finding.state }}.</p>
+{% if finding.ssvc_decision %}<p>Decision <strong>{{ decisions[finding.ssvc_decision] }}</strong>{% if finding.risk_score is not none %} · Score {{ finding.risk_score }}/100{% endif %}{% if finding.confidence_score is not none %} · Confidence {{ "%.2f"|format(finding.confidence_score) }}{% endif %}</p>
+{% if finding.risk_reasons %}<ul>{% for reason in finding.risk_reasons %}<li>{{ reason }}</li>{% endfor %}</ul>{% endif %}{% endif %}
+{% if finding.review_required %}<p class="warning"><span class="tag review">needs human review</span> {{ finding.review_reasons|join("; ") }}</p>{% endif %}
 {% if finding.risk_note is defined and finding.risk_note %}<p class="warning">{{ finding.risk_note }}</p>{% endif %}
 {% endmacro %}
 {% macro verdict(finding) %}{% if finding.relevance and finding.relevance.verdict != "unknown" %}<span class="verdict v-{{ finding.relevance.verdict }}">{{ finding.relevance.verdict|replace("_", " ") }}</span>{% endif %}{% endmacro %}
@@ -108,7 +113,7 @@ details.finding-row > summary { display:flex; flex-wrap:wrap; gap:.4rem .7rem; a
 <section id="vulnerabilities"><h2>Vulnerabilities ranked by relevance</h2>
 <p>Ordered by code-computed relevance, then risk level. Open a row for its signals, fix and evidence. The Guardian never declares a finding safe.</p>
 {% for group in groups %}{% set finding = group.finding %}
-<details class="finding-row"{% if loop.first %} open{% endif %}><summary>{{ badge(finding.risk_level) }} <code>{{ finding.advisory_id or "UNKNOWN" }}</code> <span class="pkg">{{ group.name }} {{ group.versions|join(", ") }}</span>{% if group.count > 1 %} <span class="tag">{{ group.count }} builds</span>{% endif %} {{ verdict(finding) }}{% if group.ai %} <span class="tag ai">AI reviewed</span>{% endif %} <span class="muted">fix {{ finding.fixed_versions|join(", ") or "none listed" }}</span></summary>
+<details class="finding-row"{% if loop.first %} open{% endif %}><summary>{{ badge(finding.risk_level) }} <code>{{ finding.advisory_id or "UNKNOWN" }}</code> <span class="pkg">{{ group.name }} {{ group.versions|join(", ") }}</span>{% if group.count > 1 %} <span class="tag">{{ group.count }} builds</span>{% endif %} {{ verdict(finding) }}{% if group.ai %} <span class="tag ai">AI reviewed</span>{% endif %}{% if finding.ssvc_decision %} <span class="tag">{{ decisions[finding.ssvc_decision] }}{% if finding.risk_score is not none %} · {{ finding.risk_score }}{% endif %}</span>{% endif %}{% if finding.review_required %} <span class="tag review">needs human review</span>{% endif %} <span class="muted">fix {{ finding.fixed_versions|join(", ") or "none listed" }}</span></summary>
 {% if finding.relevance %}<p>{{ finding.relevance.summary }}</p>
 <div class="table"><table><thead><tr><th>Signal</th><th>Value</th><th>Detail</th><th>Evidence</th></tr></thead><tbody>
 {% for signal in finding.relevance.signals %}<tr><td>{{ signal.name|replace("_", " ") }}</td><td><strong>{{ signal.value }}</strong></td><td>{{ signal.detail }}</td><td>{% for id in signal.evidence_ids %}<code>{{ id[:12] }}</code> {% else %}—{% endfor %}</td></tr>{% endfor %}

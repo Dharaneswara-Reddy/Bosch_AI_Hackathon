@@ -110,6 +110,18 @@
           ],
           "default": null,
           "title": "Error"
+        },
+        "provider": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Provider"
         }
       },
       "required": [
@@ -117,6 +129,15 @@
       ],
       "title": "AgentTrace",
       "type": "object"
+    },
+    "Automatable": {
+      "enum": [
+        "yes",
+        "no",
+        "unknown"
+      ],
+      "title": "Automatable",
+      "type": "string"
     },
     "ClaimKind": {
       "enum": [
@@ -202,6 +223,25 @@
       ],
       "title": "Evidence",
       "type": "object"
+    },
+    "Exploitation": {
+      "enum": [
+        "active",
+        "likely",
+        "none",
+        "unknown"
+      ],
+      "title": "Exploitation",
+      "type": "string"
+    },
+    "Exposure": {
+      "enum": [
+        "open",
+        "limited",
+        "small"
+      ],
+      "title": "Exposure",
+      "type": "string"
     },
     "Finding": {
       "properties": {
@@ -372,6 +412,193 @@
             }
           ],
           "default": null
+        },
+        "cvss_vector": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cvss Vector"
+        },
+        "cvss_score": {
+          "anyOf": [
+            {
+              "maximum": 10,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cvss Score"
+        },
+        "epss": {
+          "anyOf": [
+            {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Epss"
+        },
+        "epss_percentile": {
+          "anyOf": [
+            {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Epss Percentile"
+        },
+        "epss_date": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Epss Date"
+        },
+        "known_exploited": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Known Exploited"
+        },
+        "intel_evidence_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Intel Evidence Ids",
+          "type": "array"
+        },
+        "ssvc_decision": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SsvcDecision"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "exploitation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Exploitation"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "exposure": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Exposure"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "automatable": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Automatable"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "technical_impact": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TechnicalImpact"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "risk_score": {
+          "anyOf": [
+            {
+              "maximum": 100,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Risk Score"
+        },
+        "risk_reasons": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Risk Reasons",
+          "type": "array"
+        },
+        "confidence_score": {
+          "anyOf": [
+            {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Confidence Score"
+        },
+        "review_required": {
+          "default": false,
+          "title": "Review Required",
+          "type": "boolean"
+        },
+        "review_reasons": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Review Reasons",
+          "type": "array"
         }
       },
       "required": [
@@ -515,6 +742,24 @@
         "unknown"
       ],
       "title": "RiskLevel",
+      "type": "string"
+    },
+    "SsvcDecision": {
+      "enum": [
+        "act",
+        "attend",
+        "track_star",
+        "track"
+      ],
+      "title": "SsvcDecision",
+      "type": "string"
+    },
+    "TechnicalImpact": {
+      "enum": [
+        "total",
+        "partial"
+      ],
+      "title": "TechnicalImpact",
       "type": "string"
     }
   },

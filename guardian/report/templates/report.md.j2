@@ -49,9 +49,22 @@ SBOM unavailable.
 Evidence unavailable.
 {% endfor %}
 {% endmacro %}
+{% set decisions = {"act": "Act", "attend": "Attend", "track_star": "Track*", "track": "Track"} %}
 {% macro risk(finding) %}
 Risk **{{ finding.risk_level|md }}** · Rule {{ finding.risk_rule_id|md }} · Confidence {{ finding.confidence|md }} · State {{ finding.state|md }}.
 
+{% if finding.ssvc_decision %}
+Decision **{{ decisions[finding.ssvc_decision]|md }}**{% if finding.risk_score is not none %} · Score {{ finding.risk_score }}/100{% endif %}{% if finding.confidence_score is not none %} · Confidence {{ "%.2f"|format(finding.confidence_score) }}{% endif %}
+
+{% for reason in finding.risk_reasons %}
+- {{ reason|md }}
+{% endfor %}
+
+{% endif %}
+{% if finding.review_required %}
+**needs human review**: {{ finding.review_reasons|join("; ")|md }}
+
+{% endif %}
 {% if finding.risk_note is defined and finding.risk_note %}
 {{ finding.risk_note|md }}
 
