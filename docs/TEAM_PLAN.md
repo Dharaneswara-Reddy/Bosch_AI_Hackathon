@@ -15,7 +15,22 @@ A Python command-line tool, `guardian scan <target>`. It takes any app and outpu
 
 Everything ends up in an HTML report page. **That page is our Day 1 live demo.**
 
-Demo targets: **OWASP Juice Shop** (npm) plus **one app in another language** (P1 confirms which).
+Demo targets (both verified):
+- **OWASP Juice Shop** (npm), commit `c9f9922`.
+- **OWASP RailsGoat** (Ruby/RubyGems), https://github.com/OWASP/railsgoat, commit `f5951f13089d85c979de09e7da3c8c0fb982f94a`.
+  - `Gemfile.lock`: 167 gems, 270 parent→child edges.
+  - Test scan: OSV found 22 vulnerable gems (114 advisories); Grype found 258 matches.
+  - Examples:
+    - `rack-session 2.1.1`, GHSA-33qg-7wpp-89cq, CRITICAL, transitive via `rspec-rails → actionpack → rack-session`;
+    - `rack 3.1.19`, GHSA-5v64-555j-wjxm, HIGH, transitive via `capybara → rack`;
+    - `puma 6.6.1`, GHSA-2vqw-3mp8-cgmx, HIGH, direct.
+
+## Scanner gotchas (already hit, don't rediscover)
+
+- **Run every scanner container with `--network host`.** With default Docker networking, OSV-Scanner got DNS timeouts and silently reported **0 vulnerabilities**. Treat "0 findings" as a possible failure, not as a clean result.
+- **Grype image needs `--entrypoint /grype`.** Its first run downloads the database and takes about 3 minutes: run `scripts/prefetch.sh` early, in the background.
+- Versions seen: OSV-Scanner **2.7.1**, Grype **0.122.1**. Pin these (by digest, not `:latest`).
+- Grype also scans `vendor/` folders (extra JavaScript matches in RailsGoat). Scan the SBOM, not the raw folder, so results match P1's inventory.
 
 ## Rules for everyone
 
@@ -43,11 +58,14 @@ Demo targets: **OWASP Juice Shop** (npm) plus **one app in another language** (P
 **Why it matters:** everyone needs your output. You are the critical path.
 
 **You build:**
-1. `scripts/fetch_targets.sh`: clones Juice Shop at commit `c9f9922` and the second target into `targets/`.
+1. `scripts/fetch_targets.sh`: clones Juice Shop at commit `c9f9922` and RailsGoat at `f5951f1` into `targets/`.
 2. `guardian/resolve/npm.py`:
    - For each folder with a `package.json` (root and `frontend/`), run `npm install --package-lock-only --ignore-scripts`, then `npm ls --all --json --package-lock-only`.
    - Turn the tree into parent→child `Edge`s (`edge_source="resolver"`), with npm purls. Mark dev dependencies.
-3. `guardian/resolve/<second>.py`: the same for the second target's lockfile.
+3. `guardian/resolve/rubygems.py`: parse `Gemfile.lock`.
+   - The `specs:` section lists each gem with its version. The indented lines under a gem are its children.
+   - `DEPENDENCIES` lists the direct gems.
+   - Output `Edge`s with `pkg:gem/<name>@<version>` purls. No Ruby or Bundler needed: it's a text file.
 4. `guardian/resolve/__init__.py`: picks a resolver from the files present. If none matches, `resolution="manifest-only"`.
 5. `guardian/sbom.py`: runs Syft in Docker (`-o cyclonedx-json`), merges your resolver edges into the SBOM, writes `sbom.cdx.json`.
 6. `guardian/graph.py`: loads the SBOM into NetworkX, `shortest_path()` (breadth-first search), `path_count()` (counted, not listed), writes `graph.json`.
