@@ -304,3 +304,48 @@ def test_baseline_is_not_allowed_with_the_demo(client: TestClient) -> None:
     response = client.post("/scan", json={"demo": True, "baseline_ref": "v1"})
     assert response.status_code == 422
     assert "baseline" in response.text.lower()
+
+
+def test_baseline_scan_is_cached_per_repository_and_commit(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _baseline_scan_fakes(monkeypatch)
+    baseline_scans: list[Path] = []
+    inner = pipeline.runner.scan
+
+    def counting(target: Path, out: Path, **kwargs: object) -> RunResult:
+        if out.parent.name == "baseline":
+            baseline_scans.append(out)
+        return inner(target, out, **kwargs)
+
+    monkeypatch.setattr(pipeline.runner, "scan", counting)
+    body = {"url": "https://github.com/o/r", "ref": "main", "baseline_ref": "v1"}
+    first = client.post("/scan", json=body).json()["scan_id"]
+    second = client.post("/scan", json=body).json()["scan_id"]
+    assert len(baseline_scans) == 1
+    changes = [client.get(f"/scan/{sid}/changes").json() for sid in (first, second)]
+    assert changes[0] == changes[1]
+    assert calls["main"]["baseline"].parts[-2:] == ("baseline", "out")
+
+
+def test_baseline_timeout_is_reported_and_main_scan_continues(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import time
+
+    calls = _baseline_scan_fakes(monkeypatch)
+    inner = pipeline.runner.scan
+
+    def slow(target: Path, out: Path, **kwargs: object) -> RunResult:
+        if out.parent.name == "baseline":
+            time.sleep(2)
+        return inner(target, out, **kwargs)
+
+    monkeypatch.setattr(pipeline.runner, "scan", slow)
+    monkeypatch.setenv("GUARDIAN_BASELINE_TIMEOUT", "0.2")
+    scan_id = client.post("/scan", json={
+        "url": "https://github.com/o/r", "baseline_ref": "v1"}).json()["scan_id"]
+    status = client.get(f"/scan/{scan_id}").json()
+    assert "timed out" in status["errors"]["baseline"]
+    assert status["status"] != "failed"
+    assert calls["main"].get("baseline") is None

@@ -350,6 +350,7 @@ class FallbackClient:
         self._providers = providers
         self.skipped = skipped
         self.failed: dict[str, str] = {}
+        self._down: set[str] = set()
         self._lock = threading.Lock()
         self._local = threading.local()
         self.name = "→".join(label.split(":")[0] for label, _ in providers)
@@ -360,6 +361,11 @@ class FallbackClient:
         value: str | None = getattr(self._local, "last_used", None)
         return value
 
+    def revive(self) -> None:
+        """Try every provider again; ``failed`` keeps the history for the trace."""
+        with self._lock:
+            self._down.clear()
+
     @property
     def labels(self) -> list[str]:
         return [label for label, _ in self._providers]
@@ -367,7 +373,7 @@ class FallbackClient:
     def complete(self, system: str, user: str, schema: JsonObject, timeout: float) -> JsonObject:
         for label, client in self._providers:
             with self._lock:
-                if label in self.failed:
+                if label in self._down:
                     continue
             try:
                 result = client.complete(system, user, schema, timeout)
@@ -376,6 +382,7 @@ class FallbackClient:
             except LLMError as exc:
                 with self._lock:
                     self.failed.setdefault(label, f"{type(exc).__name__}: {exc}")
+                    self._down.add(label)
                 continue
             self._local.last_used = label
             return result

@@ -29,6 +29,9 @@ DETECTOR_FOR_TYPE: dict[str, str] = {
     "unverified_install_script": "unverified_source",
     "unpinned_base_image": "image_pin",
     "unpinned_ci_action": "ci_pin",
+    "integrity_change": "lockfile_integrity",
+    "resolved_source_change": "lockfile_integrity",
+    "missing_integrity": "lockfile_integrity",
 }
 
 

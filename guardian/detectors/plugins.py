@@ -13,6 +13,7 @@ from guardian.detectors import (
     git_diff,
     image_pin,
     install_script,
+    lockfile_integrity,
     sbom_diff,
     typosquat,
     unverified_source,
@@ -114,6 +115,19 @@ def _git_lockfile(target: Path, commit: str, relative: str) -> dict[str, object]
     return parsed if isinstance(parsed, dict) else {"packages": {}}
 
 
+def _baseline_lockfile(
+    context: DetectorContext, root: Path, relative: str
+) -> dict[str, object] | None:
+    """Prefer the lockfile the baseline scan archived; fall back to git history."""
+    if context.baseline is not None:
+        archived = context.baseline / "raw/detectors/install_script/lockfiles" / relative
+        if archived.is_file():
+            parsed = json.loads(archived.read_text(encoding="utf-8"))
+            return parsed if isinstance(parsed, dict) else None
+    commit = _baseline_commit(context)
+    return _git_lockfile(root, commit, relative) if commit else None
+
+
 def _npm_lockfiles(root: Path) -> list[Path]:
     return sorted(
         path for path in root.rglob("package-lock.json")
@@ -151,11 +165,10 @@ def _run_install_script(context: DetectorContext) -> DetectionResult:
             no_lock_rows.extend(coverage_rows("install_script", [ecosystem], status, reason))
         return DetectionResult(coverage=no_lock_rows)
 
-    baseline_commit = _baseline_commit(context)
     combined = DetectionResult()
     for lockfile in target_lockfiles:
         relative = lockfile.relative_to(root).as_posix()
-        baseline = _git_lockfile(root, baseline_commit, relative) if baseline_commit else None
+        baseline = _baseline_lockfile(context, root, relative)
         partial = install_script.detect(lockfile, baseline_lockfile=baseline, ecosystems=["npm"])
         lock_bytes = lockfile.read_bytes()
         artifact_file = f"raw/detectors/install_script/lockfiles/{relative}"
@@ -202,6 +215,49 @@ def _run_install_script(context: DetectorContext) -> DetectionResult:
     return combined
 
 
+def _run_lockfile_integrity(context: DetectorContext) -> DetectionResult:
+    ecosystems = _ecosystems(context)
+    root = context.target_path
+    lockfiles = _npm_lockfiles(root) if root is not None else []
+    if root is None or not lockfiles:
+        return lockfile_integrity.detect(None, baseline_lockfile=None, ecosystems=ecosystems)
+    combined = DetectionResult()
+    for lockfile in lockfiles:
+        relative = lockfile.relative_to(root).as_posix()
+        baseline = _baseline_lockfile(context, root, relative)
+        partial = lockfile_integrity.detect(
+            lockfile, baseline_lockfile=baseline, ecosystems=["npm"]
+        )
+        lock_bytes = lockfile.read_bytes()
+        artifact_file = f"raw/detectors/lockfile_integrity/lockfiles/{relative}"
+        combined.artifacts[artifact_file] = lock_bytes
+        combined.evidence.extend(
+            record.model_copy(
+                update={"file": artifact_file, "sha256": sha256_bytes(lock_bytes)}, deep=True
+            )
+            for record in partial.evidence
+        )
+        combined.findings.extend(partial.findings)
+        combined.finding_details.update(partial.finding_details)
+    unique = {finding.finding_id: finding for finding in reversed(combined.findings)}
+    combined.findings = list(unique.values())
+    status = CoverageStatus.FINDING if combined.findings else CoverageStatus.PASS
+    counts = {ecosystem: 0 for ecosystem in ecosystems}
+    counts["npm"] = len(lockfiles)
+    combined.coverage = [
+        row
+        for ecosystem in ecosystems
+        for row in coverage_rows(
+            "lockfile_integrity",
+            [ecosystem],
+            status if ecosystem == "npm" else CoverageStatus.NOT_COVERED,
+            "" if ecosystem == "npm" else "Lockfile integrity is checked for npm only",
+            counts,
+        )
+    ]
+    return combined
+
+
 def _materialize_result(
     context: DetectorContext, name: str, result: DetectionResult
 ) -> DetectionResult:
@@ -238,7 +294,8 @@ def _materialize_result(
             )
             if record.evidence_id not in finding.evidence_ids:
                 finding.evidence_ids.append(record.evidence_id)
-            staged_records.append(record)
+            if record.evidence_id not in {staged.evidence_id for staged in staged_records}:
+                staged_records.append(record)
 
     raw_root = (context.out / "raw").resolve()
     for relative, content in artifacts.items():
@@ -271,6 +328,7 @@ __all__ = [
     "_run_git_diff",
     "_run_image_pin",
     "_run_install_script",
+    "_run_lockfile_integrity",
     "_run_sbom_diff",
     "_run_typosquat",
     "_run_unverified_source",

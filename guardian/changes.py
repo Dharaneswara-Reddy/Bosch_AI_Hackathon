@@ -4,7 +4,7 @@ import re
 
 from pydantic import BaseModel, Field
 
-from guardian.models import Component, Finding, FindingKind, GraphArtifact
+from guardian.models import UNKNOWN, Component, Finding, FindingKind, GraphArtifact
 
 PackageKey = tuple[str, str]
 FindingKey = tuple[str, str, str]
@@ -47,6 +47,8 @@ def _version_key(version: str) -> tuple[int, ...]:
 def _versions(graph: GraphArtifact) -> dict[PackageKey, set[str]]:
     packages: dict[PackageKey, set[str]] = {}
     for node in graph.nodes:
+        if node.ecosystem == UNKNOWN:
+            continue
         packages.setdefault((node.ecosystem, node.name), set()).add(node.version)
     return packages
 

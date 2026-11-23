@@ -82,3 +82,12 @@ test('provider line reports when nothing answered, and nothing when no provider 
   assert.equal(providerLine([row('triage')]), null);
   assert.equal(providerLine([]), null);
 });
+
+test('provider line states plainly when the AI planner was unavailable', () => {
+  const planner = row('remediation_planner', {
+    error: 'AI planner unavailable (rate limited) — rule-based fixes shown. Provider returned HTTP 429.'});
+  assert.equal(providerLine([row('triage', {provider: 'groq:llama', llm_calls: 1}), planner]),
+    'Answered by: groq:llama (1 call) · AI planner unavailable (rate limited) — rule-based fixes shown');
+  assert.equal(providerLine([row('triage', {provider: 'groq:llama', llm_calls: 1}),
+    row('remediation_planner', {error: 'no input'})]), 'Answered by: groq:llama (1 call)');
+});

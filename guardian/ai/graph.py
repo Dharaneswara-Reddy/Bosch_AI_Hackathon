@@ -27,7 +27,13 @@ from guardian.ai.llm import LLMClient
 from guardian.ai.runtime import AgentRuntime
 from guardian.ai.schemas import LLMReply
 from guardian.ai.state import GuardianState, RemediationProposal
-from guardian.config import AI_CONCURRENCY, AI_MAX_GROUPS, AI_MIN_RISK
+from guardian.config import (
+    AI_CONCURRENCY,
+    AI_MAX_GROUPS,
+    AI_MIN_RISK,
+    AI_PLANNER_MAX,
+    AI_PLANNER_TIMEOUT_S,
+)
 from guardian.models import AgentClaim, AgentTrace, LlmStatus, RiskAdjustment
 
 DEFAULT_TIMEOUT_S = 30.0
@@ -92,13 +98,15 @@ def run_ai_review(
     max_groups: int = AI_MAX_GROUPS,
     pack_batch: int = PACK_BATCH,
     concurrency: int = AI_CONCURRENCY,
+    planner_timeout: float = AI_PLANNER_TIMEOUT_S,
+    planner_max: int = AI_PLANNER_MAX,
 ) -> AIReviewResult:
     """Run the agent graph once. Never raises for LLM problems.
 
     ``concurrency`` bounds how many branch agents run at once (LangGraph ``max_concurrency``).
     """
     runtime = AgentRuntime(ctx=ctx, client=client, timeout=timeout)
-    agents = Agents(runtime, min_risk, max_groups, pack_batch)
+    agents = Agents(runtime, min_risk, max_groups, pack_batch, planner_timeout, planner_max)
     initial: GuardianState = {
         "pending": list(injected or []),
         "claims": [],

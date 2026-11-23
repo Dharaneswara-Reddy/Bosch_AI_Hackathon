@@ -60,6 +60,11 @@ class AgentRuntime:
             return "LLM unavailable"
         return self.open_reason
 
+    def _blocked_for(self, reserved: bool) -> str | None:
+        if self.unavailable:
+            return "LLM unavailable"
+        return None if reserved else self.open_reason
+
     def ask(
         self,
         agent: AgentRole,
@@ -67,10 +72,21 @@ class AgentRuntime:
         schema: JsonSchema,
         reply: type[ReplyT],
         branch: str = "",
+        reserved_timeout: float | None = None,
     ) -> tuple[ReplyT | None, str | None]:
-        """Call the model for one agent. Returns (reply, None) or (None, error)."""
-        if self.blocked is not None:
-            return None, self.blocked
+        """Call the model for one agent. Returns (reply, None) or (None, error).
+
+        ``reserved_timeout`` gives the call its own deadline and ignores the run's open breaker
+        and failed-provider marks, so an agent late in the run is not starved by earlier
+        rate limits.
+        """
+        reserved = reserved_timeout is not None
+        deadline = reserved_timeout if reserved_timeout is not None else self.timeout
+        blocked = self._blocked_for(reserved)
+        if blocked is not None:
+            return None, blocked
+        if reserved:
+            getattr(self.client, "revive", lambda: None)()
         key = branch_key(agent.name, branch)
         redacted, count = redact_secrets(json.dumps(data, sort_keys=True, default=str))
         with self._lock:
@@ -79,7 +95,9 @@ class AgentRuntime:
         system, user = system_prompt(agent, schema), user_prompt(agent, redacted)
         error = ""
         for _attempt in range(2):
-            parsed, error, retry, provider = self._attempt(key, system, user, schema, reply)
+            parsed, error, retry, provider = self._attempt(
+                key, system, user, schema, reply, deadline, reserved
+            )
             if parsed is not None:
                 with self._lock:
                     self.succeeded.add(agent.name)
@@ -97,14 +115,17 @@ class AgentRuntime:
         user: str,
         schema: JsonSchema,
         reply: type[ReplyT],
+        deadline: float,
+        reserved: bool,
     ) -> tuple[ReplyT | None, str, bool, str | None]:
-        if self.blocked is not None:
-            return None, self.blocked, False, None
+        blocked = self._blocked_for(reserved)
+        if blocked is not None:
+            return None, blocked, False, None
         with self._lock:
             self.calls += 1
             self.calls_by[key] = self.calls_by.get(key, 0) + 1
         try:
-            raw, provider = self._call(system, user, schema)
+            raw, provider = self._call(system, user, schema, deadline)
             return reply.model_validate(raw), "", False, provider
         except (ValidationError, LLMBadResponse) as exc:
             message = f"reply did not match the agent schema: {str(exc)[:200]}"
@@ -124,17 +145,17 @@ class AgentRuntime:
         return reason
 
     def _invoke(
-        self, system: str, user: str, schema: JsonSchema
+        self, system: str, user: str, schema: JsonSchema, deadline: float
     ) -> tuple[dict[str, Any], str | None]:
-        result = self.client.complete(system, user, schema, self.timeout)
+        result = self.client.complete(system, user, schema, deadline)
         return result, getattr(self.client, "last_used", None)
 
     def _call(
-        self, system: str, user: str, schema: JsonSchema
+        self, system: str, user: str, schema: JsonSchema, deadline: float
     ) -> tuple[dict[str, Any], str | None]:
         # Each provider in a fallback chain gets its own deadline, so the outer wait covers all.
-        budget = self.timeout * max(1, len(getattr(self.client, "labels", [])))
-        future = _EXECUTOR.submit(self._invoke, system, user, schema)
+        budget = deadline * max(1, len(getattr(self.client, "labels", [])))
+        future = _EXECUTOR.submit(self._invoke, system, user, schema, deadline)
         try:
             return future.result(timeout=budget)
         except FutureTimeout as exc:

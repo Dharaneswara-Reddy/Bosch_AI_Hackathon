@@ -32,7 +32,7 @@ from guardian.ai.prompts import (
     VULN_ANALYST,
     AgentRole,
 )
-from guardian.ai.remediation import build_candidates, validate_proposal
+from guardian.ai.remediation import build_candidates, planner_candidates, validate_proposal
 from guardian.ai.risk_rules import check_adjustment
 from guardian.ai.runtime import AgentRuntime, branch_key
 from guardian.ai.schemas import (
@@ -51,6 +51,7 @@ from guardian.ai.schemas import (
 from guardian.ai.state import BranchInput, EvidencePack, GuardianState
 from guardian.ai.triage import triage
 from guardian.ai.validator import validate
+from guardian.config import AI_PLANNER_MAX, AI_PLANNER_TIMEOUT_S
 from guardian.models import AgentClaim, AgentTrace, ClaimKind, RiskAdjustment
 
 ANALYSTS = (VULN_ANALYST.name, CHANGE_ANALYST.name, ANALYST_REVISION.name)
@@ -88,6 +89,15 @@ def _trace(agent: str, runtime: AgentRuntime, branch: str = "", **fields: Any) -
     )
 
 
+def _planner_error(error: str | None) -> str | None:
+    """Plain wording for the UI when the planner could not answer."""
+    if error is None or error.startswith("reply did not match"):
+        return error
+    limited = "429" in error or "rate limit" in error.lower()
+    reason = " (rate limited)" if limited else ""
+    return f"AI planner unavailable{reason} — rule-based fixes shown. {error}"
+
+
 def _pack_view(pack: EvidencePack) -> dict[str, Any]:
     return pack.model_dump(exclude={"pack_id"})
 
@@ -101,8 +111,12 @@ class Agents:
         min_risk: str,
         max_groups: int,
         pack_batch: int = PACK_BATCH,
+        planner_timeout: float = AI_PLANNER_TIMEOUT_S,
+        planner_max: int = AI_PLANNER_MAX,
     ) -> None:
         self.rt = runtime
+        self.planner_timeout = planner_timeout
+        self.planner_max = planner_max
         self.min_risk = min_risk
         self.max_groups = max_groups
         self.pack_batch = pack_batch
@@ -354,7 +368,9 @@ class Agents:
         return {"candidates": candidates, "trace": [trace]}
 
     def remediation_planner(self, state: GuardianState) -> Update:
-        candidates = state.get("candidates", [])
+        candidates = planner_candidates(
+            state.get("candidates", []), self.rt.ctx.findings, self.planner_max
+        )
         if not candidates:
             return {"trace": [AgentTrace(agent=REMEDIATION_PLANNER.name, error="no input")]}
         packs = self._packs_by_finding(state)
@@ -362,7 +378,14 @@ class Agents:
             "remediation_candidates": [c.model_dump(mode="json") for c in candidates],
             "evidence_packs": [_pack_view(packs[c.finding_id]) for c in candidates],
         }
-        reply, error = self.rt.ask(REMEDIATION_PLANNER, data, STRICT_PLANNER_SCHEMA, PlannerReply)
+        reply, error = self.rt.ask(
+            REMEDIATION_PLANNER,
+            data,
+            STRICT_PLANNER_SCHEMA,
+            PlannerReply,
+            reserved_timeout=self.planner_timeout,
+        )
+        error = _planner_error(error)
         by_id = {c.finding_id: c for c in candidates}
         checked = [
             validate_proposal(p, by_id, packs, self.rt.ctx)
