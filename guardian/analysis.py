@@ -15,15 +15,17 @@ from guardian.models import Component, FindingKind, RunResult
 from guardian.reachability import ReachabilityScan, scan_imports
 from guardian.relevance import advisory_details, assess, path_facts
 from guardian.scope import apply_scope as scope_graph
-from guardian.scope import npm_dev_flags
+from guardian.scope import gemfile_groups, npm_dev_flags
 
 REACHABILITY_FILE = "raw/relevance/reachability.json"
 ASSESSED_KINDS = frozenset({FindingKind.VULNERABILITY, FindingKind.MALICIOUS})
 
 
 def apply_scope(result: RunResult, target: Path | None, roots: list[str]) -> None:
-    flags = npm_dev_flags(target) if target is not None and target.is_dir() else {}
-    result.graph = scope_graph(result.graph, roots, flags)
+    local = target is not None and target.is_dir()
+    flags = npm_dev_flags(target) if local and target is not None else {}
+    gems = gemfile_groups(target) if local and target is not None else None
+    result.graph = scope_graph(result.graph, roots, flags, gems)
 
 
 def _package_names(result: RunResult, nodes: dict[str, Component]) -> set[str]:
