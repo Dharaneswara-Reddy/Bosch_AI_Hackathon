@@ -71,8 +71,9 @@ def test_same_major_fix_is_preferred_and_major_jump_is_flagged() -> None:
     assert by_finding["fb"].breaking_change_risk == "medium"
 
 
-def test_transitive_or_unfixable_findings_get_no_rule_based_proposal() -> None:
+def test_unfixable_findings_and_non_npm_transitives_get_no_rule_based_proposal() -> None:
     inner = _component("inner", "1.0.0", Scope.TRANSITIVE)
+    inner = inner.model_copy(update={"ecosystem": "pypi"})
     nofix = _component("nofix", "1.0.0")
     run = _run([inner, nofix], [
         _vuln("f1", inner, ["2.0.0"], RiskLevel.HIGH),
@@ -94,3 +95,17 @@ def test_ai_proposal_takes_precedence_for_the_same_finding() -> None:
     other = _vuln("f2", lodash, ["4.17.21"], RiskLevel.LOW)
     run.findings.append(other)
     assert len(merge_proposals([ai], rule_based_proposals(run))) == 1
+
+
+def test_transitive_npm_package_gets_a_version_pin_proposal() -> None:
+    jws = _component("jws", "0.2.6", Scope.TRANSITIVE)
+    run = _run([jws], [
+        _vuln("a", jws, ["3.0.0"], RiskLevel.HIGH, "CVE-A"),
+        _vuln("b", jws, ["3.2.3", "4.0.1"], RiskLevel.MEDIUM, "CVE-B"),
+    ])
+    [proposal] = rule_based_proposals(run)
+    assert proposal.action is FixAction.PIN_VERSION
+    assert (proposal.finding_id, proposal.target_version) == ("a", "3.2.3")
+    assert proposal.validated and proposal.breaking_change_risk == "medium"
+    assert "override" in proposal.rationale and "CVE-A" in proposal.rationale
+    assert proposal.rollback == "Remove the jws override, or revert it to 0.2.6."

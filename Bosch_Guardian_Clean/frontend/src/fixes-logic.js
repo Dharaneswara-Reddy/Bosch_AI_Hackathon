@@ -35,3 +35,21 @@ export function stepCounts(step) {
   if (step.total == null || step.passed == null) return '';
   return `${step.passed} of ${step.total} passed` + (step.failed ? `, ${step.failed} failed` : '');
 }
+
+const levelText = counts => LEVELS.filter(l => counts[l]).map(l => `${counts[l]} ${l[0].toUpperCase()}${l.slice(1)}`).join(', ');
+
+export function expectedText(reduction) {
+  if (!reduction) return '';
+  const levels = levelText(reduction.fixes) || 'no findings';
+  const count = reduction.advisories.length;
+  const advisories = count ? ` (${count} ${count === 1 ? 'advisory' : 'advisories'})` : '';
+  return `Expected: fixes ${levels}${advisories}`;
+}
+
+export function compareReduction(reduction, diff) {
+  if (!reduction || !diff) return null;
+  const actual = {};
+  diff.fixed.forEach(ref => { actual[ref.risk_level] = (actual[ref.risk_level] || 0) + 1; });
+  const sameCounts = LEVELS.every(l => (reduction.fixes[l] || 0) === (actual[l] || 0));
+  return {expected: levelText(reduction.fixes) || 'nothing', actual: levelText(actual) || 'nothing', matches: sameCounts};
+}

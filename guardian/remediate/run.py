@@ -7,7 +7,15 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from guardian.models import FixAction, RemediationProposal, RiskLevel, RunResult
+from guardian.models import (
+    Component,
+    Finding,
+    FixAction,
+    RemediationProposal,
+    RiskLevel,
+    RunResult,
+    Scope,
+)
 from guardian.remediate.diff import FindingRef, RescanDiff
 from guardian.remediate.sandbox import FixTarget, StepResult, TestRun
 
@@ -54,19 +62,32 @@ class FixRun(BaseModel):
     completed_at: datetime | None = None
 
 
+APPLICABLE_ACTIONS = frozenset({FixAction.UPGRADE, FixAction.PIN_VERSION})
+
+
+def _direct_parent(finding: Finding, nodes: dict[str, Component]) -> Component | None:
+    path = finding.dependency_path
+    return nodes.get(path[1]) if len(path) > 2 else None
+
+
 def resolve_target(proposal: RemediationProposal, run: RunResult) -> FixTarget:
-    if proposal.action is not FixAction.UPGRADE or not proposal.target_version:
+    if proposal.action not in APPLICABLE_ACTIONS or not proposal.target_version:
         raise FixPlanError(
-            f"'{proposal.action.value}' cannot be applied automatically; only an upgrade "
-            "with a target version can. Make this change manually and rescan."
+            f"'{proposal.action.value}' cannot be applied automatically; only an upgrade or "
+            "version pin with a target version can. Make this change manually and rescan."
         )
     finding = next((f for f in run.findings if f.finding_id == proposal.finding_id), None)
     nodes = {n.component_id: n for n in run.graph.nodes}
     node = nodes.get(finding.component_id) if finding else None
-    if node is None:
+    if finding is None or node is None:
         raise FixPlanError(f"Finding {proposal.finding_id} is not in this scan's results.")
-    return FixTarget(ecosystem=node.ecosystem, package=node.name, from_version=node.version,
-                     to_version=proposal.target_version)
+    transitive = node.scope is Scope.TRANSITIVE
+    parent = _direct_parent(finding, nodes) if transitive else None
+    return FixTarget(
+        ecosystem=node.ecosystem, package=node.name, from_version=node.version,
+        to_version=proposal.target_version, transitive=transitive,
+        parent=parent.name if parent else None,
+        parent_version=parent.version if parent else None)
 
 
 def save_fix(work_dir: Path, run: FixRun) -> None:

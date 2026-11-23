@@ -1,5 +1,5 @@
 import json
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -251,3 +251,45 @@ def test_a_failed_source_clone_is_named_in_the_tests_not_run_reason(tmp_path: Pa
     assert run.source is not None and run.source.status == "failed"
     assert run.tests is not None and run.tests.status == "not_run"
     assert "repository not found" in run.tests.reason
+
+
+def _transitive_scan(harness: Harness) -> None:
+    nodes = [
+        Component(component_id="parent", purl="pkg:npm/ej@0.1.3", name="ej", version="0.1.3",
+                  ecosystem="npm", scope=Scope.DIRECT),
+        Component(component_id="child", purl="pkg:npm/jws@0.2.6", name="jws", version="0.2.6",
+                  ecosystem="npm", scope=Scope.TRANSITIVE),
+    ]
+    finding = Finding(finding_id="f1", kind=FindingKind.VULNERABILITY, component_id="child",
+                      purl="pkg:npm/jws@0.2.6", dependency_path=["root", "parent", "child"],
+                      fixed_versions=["3.2.3"], risk_level=RiskLevel.HIGH)
+    base = _run("1", with_finding=False)
+    base.graph = GraphArtifact(nodes=nodes)
+    base.findings = [finding]
+    _write_out(harness.work_dir / "out", base)
+    (harness.work_dir / "repo" / "package.json").write_text(
+        json.dumps({"dependencies": {"ej": "0.1.3"}}), encoding="utf-8")
+
+
+def _approve_transitive(tmp_path: Path, lookup: Callable[[str, str, str, str], str | None]) -> str:
+    harness = Harness(tmp_path / "scan")
+    _transitive_scan(harness)
+    deps = FixDeps(runner=harness.command, scan=harness.scan, engine=None, parent_lookup=lookup)
+    graph = build_fix_graph(harness.work_dir, MemorySaver(), deps)
+    proposal = harness.proposal(FixAction.PIN_VERSION).model_copy(
+        update={"target_version": "3.2.3"})
+    start_fix(graph, SCAN_ID, proposal)
+    run = resume_fix(graph, SCAN_ID, "p1", Decision(approved=True, reviewer="ana"))
+    assert run.status is FixStatus.VERIFIED, run.error
+    assert run.apply is not None
+    return (harness.work_dir / "fixes" / "p1" / "sandbox" / "package.json").read_text("utf-8")
+
+
+def test_transitive_fix_applies_the_parent_upgrade_the_lookup_found(tmp_path: Path) -> None:
+    manifest = json.loads(_approve_transitive(tmp_path, lambda *_: "7.7.8"))
+    assert manifest["dependencies"]["ej"] == "7.7.8" and "overrides" not in manifest
+
+
+def test_transitive_fix_falls_back_to_an_override(tmp_path: Path) -> None:
+    manifest = json.loads(_approve_transitive(tmp_path, lambda *_: None))
+    assert manifest["overrides"] == {"jws": "3.2.3"} and manifest["dependencies"]["ej"] == "0.1.3"
