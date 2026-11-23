@@ -88,6 +88,16 @@ class CoverageStatus(StrEnum):
     ERROR = "error"
 
 
+class ToolRun(BaseModel):
+    tool: str
+    command: list[str]
+    exit_code: int
+    duration_s: float = Field(ge=0)
+    file: str
+    sha256: str
+    tool_version: str = UNKNOWN
+
+
 class Scan(BaseModel):
     scan_id: str
     target: str
@@ -100,6 +110,9 @@ class Scan(BaseModel):
     ended_at: datetime | None = None
     status: ScanStatus = ScanStatus.PARTIAL
     llm_status: LlmStatus = LlmStatus.UNAVAILABLE
+    tools: list[ToolRun] = Field(default_factory=list)
+    errors: dict[str, str] = Field(default_factory=dict)
+    cached_age_minutes: float | None = None
 
 
 class Component(BaseModel):
@@ -128,6 +141,7 @@ class Evidence(BaseModel):
     sha256: str
     url: str | None = None
     collected_at: datetime | None = None
+    db_built_at: str = UNKNOWN
 
 
 class Finding(BaseModel):
@@ -150,6 +164,8 @@ class Finding(BaseModel):
     risk_level: RiskLevel = RiskLevel.UNKNOWN
     risk_rule_id: str | None = None
     confidence: Confidence | None = None
+    image_tag: str | None = None
+    risk_note: str | None = None
 
 
 class AgentClaim(BaseModel):
@@ -169,6 +185,35 @@ class CoverageRow(BaseModel):
     status: CoverageStatus
     reason: str = ""
     components_seen: int = 0
+
+
+class GraphArtifact(BaseModel):
+    nodes: list[Component] = Field(default_factory=list)
+    edges: list[Edge] = Field(default_factory=list)
+
+
+class FindingsArtifact(BaseModel):
+    findings: list[Finding] = Field(default_factory=list)
+    evidence: list[Evidence] = Field(default_factory=list)
+    claims: list[AgentClaim] = Field(default_factory=list)
+
+
+class EcosystemCoverage(BaseModel):
+    components: int = Field(ge=0)
+    resolver_percent: float = Field(ge=0, le=100)
+    scanner_percent: float = Field(ge=0, le=100)
+
+
+class CoverageArtifact(BaseModel):
+    rows: list[CoverageRow] = Field(default_factory=list)
+    ecosystems: dict[str, EcosystemCoverage] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class RunResult(FindingsArtifact):
+    scan: Scan
+    graph: GraphArtifact = Field(default_factory=GraphArtifact)
+    coverage: CoverageArtifact = Field(default_factory=CoverageArtifact)
 
 
 def finding_id(detector: str, purl: str, advisory_or_anomaly: str, path: list[str]) -> str:

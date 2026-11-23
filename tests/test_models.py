@@ -3,6 +3,7 @@ from pydantic import ValidationError
 
 from guardian.models import (
     UNKNOWN,
+    Edge,
     Evidence,
     Finding,
     FindingKind,
@@ -44,3 +45,14 @@ def test_finding_rejects_unknown_kind() -> None:
 def test_evidence_requires_sha256() -> None:
     with pytest.raises(ValidationError):
         Evidence(evidence_id="e1", tool="grype", tool_version="0.122.1", file="raw/grype.json")  # type: ignore[call-arg]
+
+
+def test_contract_and_identity():
+    with pytest.raises(ValidationError):
+        Edge(parent_id="app", child_id="lib", edge_source="guessed")
+    identity = finding_id("grype", "pkg:npm/lib@1", "CVE-2000-1234", ["app", "lib"])
+    assert len(identity) == 16
+    assert identity != finding_id("grype", "pkg:npm/lib@1", "CVE-2000-1234", ["lib"])
+    assert Finding(
+        finding_id=identity, kind="vulnerability", component_id="lib", purl="pkg:npm/lib@1"
+    ).risk_level == "unknown"
