@@ -1,12 +1,14 @@
 """Read Guardian settings from a local dotenv file and the environment."""
 
 import os
+import re
 from pathlib import Path
 
 from pydantic import BaseModel, Field, SecretStr, model_validator
 
 AI_TOP_N = 20
 TOOL_TIMEOUT_S = 180
+IMAGE_DIGEST = re.compile(r"[^\s@]+@sha256:[a-f0-9]{64}")
 
 
 class Settings(BaseModel):
@@ -21,6 +23,9 @@ class Settings(BaseModel):
     def require_provider_key(self) -> "Settings":
         if self.provider != "none" and not self.api_key.get_secret_value().strip():
             raise ValueError("Set GUARDIAN_LLM_API_KEY for the configured provider, or use --no-llm.")
+        for name, image in self.tool_images.items():
+            if IMAGE_DIGEST.fullmatch(image) is None:
+                raise ValueError(f"Configure a pinned digest for GUARDIAN_{name.upper()}_IMAGE.")
         return self
 
     @classmethod
@@ -40,10 +45,10 @@ class Settings(BaseModel):
             "timeout_s": values.get("GUARDIAN_LLM_TIMEOUT_S", "30"),
             "tool_images": {
                 name: values[f"GUARDIAN_{name.upper()}_IMAGE"] for name in names
-                if f"GUARDIAN_{name.upper()}_IMAGE" in values
+                if values.get(f"GUARDIAN_{name.upper()}_IMAGE")
             },
             "db_built_at": {
                 name: values[f"GUARDIAN_{name.upper()}_DB_BUILT_AT"] for name in names
-                if f"GUARDIAN_{name.upper()}_DB_BUILT_AT" in values
+                if values.get(f"GUARDIAN_{name.upper()}_DB_BUILT_AT")
             },
         })

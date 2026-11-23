@@ -28,3 +28,20 @@ def test_evidence_rejects_files_outside_raw(tmp_path: Path) -> None:
     file.write_text("{}", encoding="utf-8")
     with pytest.raises(ValueError):
         EvidenceStore(tmp_path).add("grype", file, "")
+
+
+def test_scanner_records_are_verified_as_a_batch(tmp_path: Path) -> None:
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    file = raw / "scanner.json"
+    file.write_text("{}", encoding="utf-8")
+    original = EvidenceStore(tmp_path)
+    key = original.add("grype", file, "/matches")
+    record = original.get(key)
+    imported = EvidenceStore(tmp_path)
+    corrupt = record.model_copy(update={"evidence_id": "bad", "sha256": "wrong"})
+    with pytest.raises(ValueError, match="SHA-256 mismatch"):
+        imported.record_many([record, corrupt])
+    assert imported.records() == []
+    imported.record_many([record, record])
+    assert imported.get(key) == record

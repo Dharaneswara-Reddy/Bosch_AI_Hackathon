@@ -7,7 +7,7 @@ from pathlib import Path
 from time import monotonic
 from uuid import uuid4
 
-from guardian.config import TOOL_TIMEOUT_S
+from guardian.config import IMAGE_DIGEST, TOOL_TIMEOUT_S
 from guardian.evidence import file_sha256
 from guardian.models import ToolRun
 
@@ -24,8 +24,8 @@ def run_tool(
 ) -> ToolRun:
     if name not in {"syft", "grype", "osv"}:
         raise ValueError("Unknown scanner name.")
-    if not re.fullmatch(r"[^\s@]+:[^\s@:]+@sha256:[a-f0-9]{64}", image):
-        raise ValueError(f"Configure a tag and SHA-256 image digest for {name}.")
+    if IMAGE_DIGEST.fullmatch(image) is None:
+        raise ValueError(f"Configure a SHA-256 image digest for {name}.")
     cmd = [
         "docker", "run", "--rm", "--pull=never", "--network=host",
         "--cap-drop=ALL", "--security-opt=no-new-privileges",
@@ -34,7 +34,8 @@ def run_tool(
         cmd.extend(["--entrypoint", "/grype"])
     for source, destination in mounts.items():
         host = source.resolve(strict=True)
-        if "," in str(host) or not re.fullmatch(r"/(?:input|cache)(?:/[\w.-]+)*", destination):
+        valid_mount = re.fullmatch(r"/(?:input|cache)(?:/[\w.-]+)*", destination)
+        if "," in str(host) or not valid_mount or {".", ".."} & set(destination.split("/")):
             raise ValueError("Use a read-only mount under /input or /cache.")
         cmd.extend(["--mount", f"type=bind,source={host},target={destination},readonly"])
     cmd.extend([image, *argv])

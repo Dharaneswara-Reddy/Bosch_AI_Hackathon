@@ -27,6 +27,8 @@ Open `report.html` inside each output folder. The same folder contains the JSON 
 
 ## Team integration
 
+Live scans require the P1 inventory and graph modules, P2 scanner modules, and P3 detector registry. AI review and claim injection also require the P4 modules. A missing scan stage is recorded in the report, and available stages keep running.
+
 | Owner | Provides | Consumed by |
 | --- | --- | --- |
 | P1 | SBOM, components and dependency edges | P2, P3, P5 |
