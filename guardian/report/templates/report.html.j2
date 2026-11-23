@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+<title>Guardian scan report</title>
+<style>
+:root { color-scheme:light; color:#17243b; background:#f2f5f8; font:16px/1.55 system-ui,sans-serif }
+body { max-width:72rem; margin:auto; padding:2rem clamp(1rem,4vw,3rem) }
+header,section { padding:1.3rem clamp(1rem,3vw,2rem); margin:0 0 1.2rem; border-radius:.75rem; background:#fff; border:1px solid #d6e0eb }
+header { background:#142941; color:#fff }
+h1,h2,h3 { margin:0 0 .7rem; line-height:1.25 }
+nav { display:flex; flex-wrap:wrap; gap:.4rem 1rem; margin:0 0 1rem }
+nav a,a { color:#005783 }
+article, details { border:1px solid #d6e0eb; padding:.75rem; border-radius:.4rem; margin:.5rem 0; overflow-wrap:anywhere }
+summary { cursor:pointer; font-weight:650 }
+table { width:100%; border-collapse:collapse }
+.table { overflow:auto }
+td,th { padding:.4rem; text-align:left; border-bottom:1px solid #d6e0eb }
+dt { font-weight:650 }
+dd { margin:0 0 .4rem; overflow-wrap:anywhere }
+code,pre { white-space:pre-wrap; overflow-wrap:anywhere }
+.warning { color:#8e3012; font-weight:650 }
+</style>
+</head>
+<body>
+<header>
+<h1>Guardian scan report</h1>
+<dl>
+<dt>Target</dt><dd>{{ scan.target }}</dd>
+<dt>Commit</dt><dd>{{ scan.commit_sha }}</dd>
+<dt>Lockfile hash</dt><dd>{{ scan.lockfile_hash }}</dd>
+<dt>Inventory resolution</dt><dd>{{ scan.resolution }}</dd>
+<dt>Scan status</dt><dd>{{ scan.status }}</dd>
+<dt>AI status</dt><dd>{{ scan.llm_status }}</dd>
+<dt>Tool versions</dt><dd>{% for name, version in scan.scanner_versions.items() %}{{ name }} {{ version }}{% if not loop.last %}, {% endif %}{% else %}UNKNOWN{% endfor %}</dd>
+<dt>Database dates</dt><dd>{% for name, date in scan.db_built_at.items() %}{{ name }} {{ date }}{% if not loop.last %}, {% endif %}{% else %}UNKNOWN{% endfor %}</dd>
+{% if scan.cached_age_minutes is defined and scan.cached_age_minutes is not none %}<dt>Cache</dt><dd>Reused a scan from {{ scan.cached_age_minutes|round(1) }} minutes ago.</dd>{% endif %}
+{% if scan.errors is defined and scan.errors %}<dt>Stage issues</dt>{% for stage, issue in scan.errors.items() %}<dd>{{ stage }} — {{ issue }}</dd>{% endfor %}{% endif %}
+</dl>
+</header>
+<nav aria-label="Report sections">
+<a href="#inventory">Inventory</a><a href="#paths">Dependency paths</a><a href="#vulnerabilities">Advisories</a><a href="#anomalies">Anomalies</a><a href="#coverage">Coverage</a><a href="#ai">AI claims</a>
+</nav>
+<main>
+<section id="inventory"><h2>Inventory</h2>
+<p>{{ components|length }} graph components. {% if has_sbom %}<a href="sbom.cdx.json" download>Download CycloneDX SBOM</a>{% else %}SBOM unavailable.{% endif %}</p>
+<ul>{% for name, row in coverage.ecosystems.items() %}<li>{{ name }} — {{ row.components }} components</li>{% endfor %}</ul>
+</section>
+<section id="paths"><h2>Dependency paths</h2>
+<p>Runtime reachability is UNKNOWN.</p>
+{% for finding in paths %}<p>{{ finding.advisory_id or finding.anomaly_type or finding.component_id }} — {% for node in finding.dependency_path %}{{ components[node].name if node in components else node }}{% if not loop.last %} → {% endif %}{% endfor %}{% if finding.path_count is number %} ({{ finding.path_count }} paths){% endif %}</p>
+{% else %}<p>No dependency paths recorded.</p>{% endfor %}
+</section>
+{% macro evidence_for(ids) %}
+{% if ids %}<ul>
+{% for id in ids %}
+{% set record = evidence.get(id) %}
+{% if record %}
+{% set item = record.item %}
+<li>{{ item.tool }} {{ item.tool_version }} — {% if record.href %}<a href="{{ record.href }}">{{ item.file }}</a>{% else %}{{ item.file }}{% endif %} <code>{{ item.pointer }}</code><br>SHA-256 <code>{{ item.sha256 }}</code>
+{% if item.url %}<br>Advisory source <code>{{ item.url }}</code>{% endif %}
+{% if record.diff %}<pre>{{ record.diff }}</pre>{% endif %}</li>
+{% else %}<li>Missing evidence record <code>{{ id }}</code></li>{% endif %}
+{% endfor %}
+</ul>{% else %}<p>Evidence unavailable.</p>{% endif %}
+{% endmacro %}
+{% macro risk(finding) %}
+<p>Risk <strong>{{ finding.risk_level or "UNKNOWN" }}</strong> · Rule {{ finding.risk_rule_id or "UNKNOWN" }} · Confidence {{ finding.confidence or "UNKNOWN" }} · State {{ finding.state }}.</p>
+{% if finding.risk_note is defined and finding.risk_note %}<p>{{ finding.risk_note }}</p>{% endif %}
+{% endmacro %}
+<section id="vulnerabilities"><h2>Advisories</h2>
+{% for finding in findings %}
+{% set component = components.get(finding.component_id) %}
+<details><summary>{{ finding.advisory_id or "UNKNOWN" }} — {{ component.name if component else finding.component_id }}</summary>
+<p>Affected version {{ component.version if component else "UNKNOWN" }} · Fix {{ finding.fixed_versions|join(", ") or "UNKNOWN" }} · Aliases {{ finding.aliases|join(", ") or "UNKNOWN" }}.</p>
+<p>Source severity {{ finding.source_severity }} · Confirmed by {{ finding.confirmed_by|join(" + ") or "UNKNOWN" }}.</p>
+{% if finding.severities is defined and finding.severities %}<ul>{% for source, severity in finding.severities.items() %}<li>{{ source }} — {{ severity }}</li>{% endfor %}</ul>{% endif %}
+{{ risk(finding) }}
+{{ evidence_for(finding.evidence_ids) }}
+</details>
+{% else %}<p>No advisories reported. See coverage for scan completeness.</p>{% endfor %}
+</section>
+<section id="anomalies"><h2>Anomalies</h2>
+{% for finding in anomalies %}<article><h3>{{ finding.anomaly_type or "UNKNOWN" }}</h3>
+<p>{{ finding.component_id if finding.component_id else "UNKNOWN" }}</p>
+{{ risk(finding) }}{{ evidence_for(finding.evidence_ids) }}</article>
+{% else %}<p>No anomalies reported. See coverage for detector results.</p>{% endfor %}
+</section>
+<section id="coverage"><h2>Coverage</h2>
+{% for warning in coverage.warnings %}<p class="warning">{{ warning }}</p>{% endfor %}
+{% if coverage.ecosystems %}<div class="table"><table><caption>Ecosystem inventory and matching</caption><thead><tr><th>Ecosystem</th><th>Components</th><th>Resolver edges</th><th>Scanner matches</th></tr></thead><tbody>
+{% for name, row in coverage.ecosystems.items() %}<tr><td>{{ name }}</td><td>{{ row.components }}</td><td>{{ "%.1f"|format(row.resolver_percent) }}%</td><td>{{ "%.1f"|format(row.scanner_percent) }}%</td></tr>{% endfor %}
+</tbody></table></div>{% endif %}
+{% if coverage.rows %}<div class="table"><table><caption>Detector results</caption><thead><tr><th>Detector</th><th>Ecosystem</th><th>Status</th><th>Components</th><th>Reason</th></tr></thead><tbody>
+{% for row in coverage.rows %}<tr><td>{{ row.detector }}</td><td>{{ row.ecosystem }}</td><td>{{ row.status }}</td><td>{{ row.components_seen }}</td><td>{{ row.reason or "UNKNOWN" }}</td></tr>{% endfor %}
+</tbody></table></div>{% else %}<p>No detector coverage recorded.</p>{% endif %}
+</section>
+<section id="ai"><h2>AI claims</h2>
+<p>AI status {{ scan.llm_status }}.</p>
+{% for title, claims in [("Accepted evidence claims", accepted), ("AI inferences", inferences), ("Rejected claims", rejected)] %}
+<h3>{{ title }}</h3>{% for claim in claims %}<article><p>{{ claim.text }}</p>
+{% if claim.rejected_reason %}<p>Reason: {{ claim.rejected_reason }}</p>{% endif %}
+{% if claim.uncertainty and claim.uncertainty != "UNKNOWN" %}<p>Uncertainty: {{ claim.uncertainty }}</p>{% endif %}
+{% if claim.evidence_ids %}{{ evidence_for(claim.evidence_ids) }}{% endif %}
+</article>{% else %}<p>None recorded.</p>{% endfor %}
+{% endfor %}
+</section>
+</main>
+</body>
+</html>

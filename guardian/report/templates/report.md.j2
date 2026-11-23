@@ -1,0 +1,155 @@
+# Guardian scan report
+
+- Target {{ scan.target|md }}
+- Commit {{ scan.commit_sha|md }}
+- Lockfile hash {{ scan.lockfile_hash|md }}
+- Inventory resolution {{ scan.resolution|md }}
+- Scan status {{ scan.status|md }}
+- AI status {{ scan.llm_status|md }}
+- Tool versions {% for name, version in scan.scanner_versions.items() %}{{ name|md }} {{ version|md }}{% if not loop.last %}, {% endif %}{% else %}UNKNOWN{% endfor %}{{ "\n" -}}
+- Database dates {% for name, date in scan.db_built_at.items() %}{{ name|md }} {{ date|md }}{% if not loop.last %}, {% endif %}{% else %}UNKNOWN{% endfor %}{{ "\n" -}}
+{% if scan.cached_age_minutes is defined and scan.cached_age_minutes is not none %}
+- Reused a scan from {{ scan.cached_age_minutes|round(1) }} minutes ago.
+{% endif %}
+{% if scan.errors is defined and scan.errors %}
+{% for stage, issue in scan.errors.items() %}
+- {{ stage|md }} — {{ issue|md }}
+{% endfor %}
+{% endif %}
+
+## Inventory
+
+{{ components|length }} graph components.
+{% if has_sbom %}
+[Download CycloneDX SBOM](sbom.cdx.json)
+{% else %}
+SBOM unavailable.
+{% endif %}
+{% for name, row in coverage.ecosystems.items() %}
+- {{ name|md }} — {{ row.components }} components
+{% endfor %}
+
+## Dependency paths
+
+Runtime reachability is UNKNOWN.
+
+{% for finding in paths %}
+- {{ (finding.advisory_id or finding.anomaly_type or finding.component_id)|md }} — {% for node in finding.dependency_path %}{{ (components[node].name if node in components else node)|md }}{% if not loop.last %} → {% endif %}{% endfor %}{% if finding.path_count is number %} ({{ finding.path_count }} paths){% endif %}{{ "\n" -}}
+{% else %}
+No dependency paths recorded.
+{% endfor %}
+{% macro evidence_for(ids) %}
+{% for id in ids %}
+{% set record = evidence.get(id) %}
+{% if record %}
+{% set item = record.item %}
+- {{ item.tool|md }} {{ item.tool_version|md }} — {% if record.href %}[{{ item.file|md }}]({{ record.href }}){% else %}{{ item.file|md }}{% endif %} {{ item.pointer|md }} · SHA-256 {{ item.sha256|md }}{{ "\n" -}}
+{% if item.url %}
+  - Advisory source {{ item.url|md }}
+{% endif %}
+{% if record.diff %}
+{% for line in record.diff.splitlines() %}
+  - {{ line|md }}
+{% endfor %}
+{% endif %}
+{% else %}
+- Missing evidence record {{ id|md }}
+{% endif %}
+{% else %}
+Evidence unavailable.
+{% endfor %}
+{% endmacro %}
+{% macro risk(finding) %}
+Risk **{{ finding.risk_level|md }}** · Rule {{ finding.risk_rule_id|md }} · Confidence {{ finding.confidence|md }} · State {{ finding.state|md }}.
+
+{% if finding.risk_note is defined and finding.risk_note %}
+{{ finding.risk_note|md }}
+
+{% endif %}
+{% endmacro %}
+
+## Advisories
+
+{% for finding in findings %}
+{% set component = components.get(finding.component_id) %}
+### {{ finding.advisory_id|md }} — {{ (component.name if component else finding.component_id)|md }}
+
+Affected version {{ (component.version if component else "UNKNOWN")|md }} · Fix {{ (finding.fixed_versions|join(", ") or "UNKNOWN")|md }} · Aliases {{ (finding.aliases|join(", ") or "UNKNOWN")|md }}.
+
+Source severity {{ finding.source_severity|md }} · Confirmed by {{ (finding.confirmed_by|join(" + ") or "UNKNOWN")|md }}.
+
+{% if finding.severities is defined %}
+{% for source, severity in finding.severities.items() %}
+- {{ source|md }} — {{ severity|md }}
+{% endfor %}
+{% endif %}
+{{ risk(finding) }}
+{{ evidence_for(finding.evidence_ids) }}
+{% else %}
+No advisories reported. See coverage for scan completeness.
+{% endfor %}
+
+## Anomalies
+
+{% for finding in anomalies %}
+### {{ finding.anomaly_type|md }}
+
+{{ finding.component_id|md }}
+
+{{ risk(finding) }}
+{{ evidence_for(finding.evidence_ids) }}
+{% else %}
+No anomalies reported. See coverage for detector results.
+{% endfor %}
+
+## Coverage
+
+{% for warning in coverage.warnings %}
+- {{ warning|md }}
+{% endfor %}
+
+{% if coverage.ecosystems %}
+| Ecosystem | Components | Resolver edges | Scanner matches |
+|---|---:|---:|---:|
+{% for name, row in coverage.ecosystems.items() %}
+| {{ name|md }} | {{ row.components }} | {{ "%.1f"|format(row.resolver_percent) }}% | {{ "%.1f"|format(row.scanner_percent) }}% |
+{% endfor %}
+
+{% endif %}
+{% if coverage.rows %}
+| Detector | Ecosystem | Status | Components | Reason |
+|---|---|---|---:|---|
+{% for row in coverage.rows %}
+| {{ row.detector|md }} | {{ row.ecosystem|md }} | {{ row.status|md }} | {{ row.components_seen }} | {{ (row.reason or "UNKNOWN")|md }} |
+{% endfor %}
+{% else %}
+No detector coverage recorded.
+{% endif %}
+
+## AI claims
+
+AI status {{ scan.llm_status|md }}.
+
+{% for title, claims in [("Accepted evidence claims", accepted), ("AI inferences", inferences), ("Rejected claims", rejected)] %}
+### {{ title }}
+
+{% for claim in claims %}
+{{ claim.text|md }}
+
+{% if claim.rejected_reason %}
+Reason: {{ claim.rejected_reason|md }}
+
+{% endif %}
+{% if claim.uncertainty and claim.uncertainty != "UNKNOWN" %}
+Uncertainty: {{ claim.uncertainty|md }}
+
+{% endif %}
+{% if claim.evidence_ids %}
+{{ evidence_for(claim.evidence_ids) }}
+
+{% endif %}
+{% else %}
+None recorded.
+
+{% endfor %}
+{% endfor %}

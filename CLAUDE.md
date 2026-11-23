@@ -13,6 +13,7 @@
 - **Cleanliness**: No dead code, no commented-out blocks, no `TODO` placeholders in committed features.
 
 ## Commands
-- Build: `<your build command>`
-- Test: `<your test command>`
-- Lint/Typecheck: `<your lint & typecheck command>`
+- Build: `python -m pip install -e '.[dev]'`
+- Test: `python -m pytest`
+- Lint and typecheck: `ruff check .` and `mypy guardian`
+- Regenerate contracts: `python -m scripts.generate_schemas`

@@ -1,4 +1,4 @@
-"""Run a configured, digest-pinned scanner with local-only inputs."""
+"""Run a configured, digest-pinned scanner against local artifacts."""
 
 import re
 import subprocess
@@ -27,9 +27,11 @@ def run_tool(
     if not re.fullmatch(r"[^\s@]+:[^\s@:]+@sha256:[a-f0-9]{64}", image):
         raise ValueError(f"Configure a tag and SHA-256 image digest for {name}.")
     cmd = [
-        "docker", "run", "--rm", "--pull=never", "--network=none",
+        "docker", "run", "--rm", "--pull=never", "--network=host",
         "--cap-drop=ALL", "--security-opt=no-new-privileges",
     ]
+    if name == "grype":
+        cmd.extend(["--entrypoint", "/grype"])
     for source, destination in mounts.items():
         host = source.resolve(strict=True)
         if "," in str(host) or not re.fullmatch(r"/(?:input|cache)(?:/[\w.-]+)*", destination):
