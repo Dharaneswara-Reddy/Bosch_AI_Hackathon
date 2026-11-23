@@ -1,0 +1,17 @@
+# Source: curated project-team snapshot of known widely used npm names (not a ranking).
+# Captured: 2026-11-23. Review before using beyond the Day 1 demo.
+axios
+chalk
+debug
+express
+lodash
+minimist
+moment
+ngx-cookie
+react
+request
+semver
+typescript
+uuid
+webpack
+ws

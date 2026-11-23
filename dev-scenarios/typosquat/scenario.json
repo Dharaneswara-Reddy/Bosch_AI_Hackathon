@@ -1,0 +1,22 @@
+{
+  "name": "direct-npm-typosquat",
+  "description": "A direct dependency is one edit away from a popular package.",
+  "sbom": {
+    "components": [
+      {
+        "component_id": "pkg:npm/ngy-cookie@1.0.0",
+        "purl": "pkg:npm/ngy-cookie@1.0.0",
+        "name": "ngy-cookie",
+        "version": "1.0.0",
+        "ecosystem": "npm",
+        "scope": "direct"
+      }
+    ]
+  },
+  "expected": {
+    "anomaly_type": "suspected_typosquat",
+    "nearest_popular_name": "ngx-cookie",
+    "distance": 1,
+    "threshold": 2
+  }
+}
