@@ -11,6 +11,9 @@ from guardian.models import (
     finding_id,
 )
 
+# Filled by scripts/prefetch.sh; auto-update is off so scans work offline during the demo.
+GRYPE_DB_VOLUME = "guardian-grype-db"
+GRYPE_DB_DIR = "/root/.cache/grype"
 GRYPE_IMAGE = (
     "anchore/grype@sha256:661583704a253c0448ed63998b5ea2cd9d5a76ee71eedc4aed439b8ce3e93a1c"
 )
@@ -96,6 +99,9 @@ def run_grype(
     argv = [
         "docker", "run", "--rm", "--network", "host", "--entrypoint", "/grype",
         "-v", f"{sbom_path.resolve().parent}:/in:ro",
+        "-v", f"{GRYPE_DB_VOLUME}:{GRYPE_DB_DIR}",
+        "-e", f"GRYPE_DB_CACHE_DIR={GRYPE_DB_DIR}",
+        "-e", "GRYPE_DB_AUTO_UPDATE=false",
         image, f"sbom:/in/{sbom_path.name}", "-o", "json",
     ]  # fmt: skip
     proc = subprocess.run(argv, capture_output=True, text=True, timeout=timeout_s, check=False)

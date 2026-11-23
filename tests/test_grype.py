@@ -110,6 +110,9 @@ def test_run_grype_builds_docker_command_and_writes_output(
     assert argv[argv.index("--network") + 1] == "host"
     assert argv[argv.index("--entrypoint") + 1] == "/grype"
     assert f"{sbom.parent}:/in:ro" in argv
+    assert "guardian-grype-db:/root/.cache/grype" in argv
+    assert "GRYPE_DB_CACHE_DIR=/root/.cache/grype" in argv
+    assert "GRYPE_DB_AUTO_UPDATE=false" in argv
     assert argv[-4:] == [grype.GRYPE_IMAGE, "sbom:/in/sbom.cdx.json", "-o", "json"]
 
 
