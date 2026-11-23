@@ -13,3 +13,24 @@ Confirm both target directories and prefetch the team’s pinned scanner images 
 5. Run `guardian scan targets/railsgoat --out artifacts/railsgoat --no-llm`. Point out the ecosystem and checks that applied.
 6. With the P4 validator available, rerun with the team's synthetic claim file using `--inject-claim FILE`. In the rejected claims section, show the validator’s reason.
 7. Rerun with `--no-llm`. Show AI status and the findings and evidence that are still present.
+
+## Relevance and malicious-package walkthrough (demo app)
+
+Uses `demo/vulnerable-app`, a local, deliberately vulnerable app (see its README). Nothing is
+fetched, installed or run.
+
+1. In the UI choose **Scan the built-in demo app** (or run
+   `guardian scan demo/vulnerable-app --out artifacts/demo`).
+2. Findings tab: `jsonwebtoken` is ranked first as **relevant**, `lodash` **likely relevant**,
+   `minimist` **low relevance**. Click the `jsonwebtoken` row: show the signals (version in the
+   affected range, production scope, transitive at depth 2, fix is a major-version change,
+   reachability confirmed at `src/server.js:5` via `express-jwt`, exploitation unknown).
+3. Click **Show this path in the dependency graph**: the highlighted chain
+   `guardian-demo-app → express-jwt → jsonwebtoken`, each edge labelled with its source.
+4. Anomalies tab: `expresss-session` flagged as a typosquat of `express-session` and as an
+   install script from outside the npm registry, labelled **SYNTHETIC**; plus the unpinned
+   `actions/checkout@v4`.
+5. AI review tab (with a Groq key): the agent trace from triage to report writer, validated
+   explanations of why each finding is or is not relevant, and fix proposals that need human
+   approval. Tick the hallucination test to show the fabricated CVE rejected.
+6. Open the full report: sections follow the brief, ending with remaining unknowns and limitations.

@@ -1,6 +1,6 @@
 import React, {useEffect, useState} from 'react';
 import {createRoot} from 'react-dom/client';
-import {ShieldCheck, Search, GitBranch, AlertTriangle, LoaderCircle, ChevronRight, LayoutDashboard} from 'lucide-react';
+import {ShieldCheck, Search, GitBranch, AlertTriangle, LoaderCircle, ChevronRight, LayoutDashboard, FlaskConical} from 'lucide-react';
 import {Badge, Results} from './results.jsx';
 import './style.css';
 
@@ -51,26 +51,31 @@ function App() {
   const [url, setUrl] = useState('https://github.com/juice-shop/juice-shop');
   const [ref, setRef] = useState('');
   const [scanId, setScanId] = useState('');
+  const [injectFake, setInjectFake] = useState(false);
   const [error, setError] = useState('');
   const [health, setHealth] = useState(false);
+  const [ai, setAi] = useState('off');
   const {status, result, graph, reset} = useScan(scanId, setError);
-  useEffect(() => { request('/health').then(() => setHealth(true)).catch(() => setHealth(false)); }, []);
+  useEffect(() => { request('/health').then(h => { setHealth(true); setAi(h.ai || 'off'); }).catch(() => setHealth(false)); }, []);
   const busy = Boolean(scanId) && (!status || status.status === 'running');
 
-  async function scan(event) {
-    event.preventDefault();
+  async function start(body) {
     setError(''); reset(); setScanId('');
     try {
-      const started = await request('/scan', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({url, ref})});
+      const started = await request('/scan', {method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({...body, inject_fake_claim: injectFake})});
       setScanId(started.scan_id);
     } catch (e) { setError(e.message); }
   }
+
+  function scan(event) { event.preventDefault(); start({url, ref}); }
 
   return <div className="shell"><aside className="sidebar">
     <div className="brand"><div className="brandmark"><ShieldCheck size={23} strokeWidth={2.2}/></div><div><strong>Guardian</strong><span>SOFTWARE SECURITY</span></div></div>
     <div className="side-heading">WORKSPACE</div>
     <div className="nav-item active"><LayoutDashboard size={17}/> Repository analysis</div>
     <div className="side-bottom"><div className="server"><i className={health ? 'on' : ''}/>{health ? 'Backend connected' : 'Backend offline'}</div>
+      {health && <div className="server"><i className={ai !== 'off' ? 'on' : ''}/>{ai !== 'off' ? `AI agents: ${ai}` : 'AI agents off (no key)'}</div>}
       <p>Scans run the team Guardian pipeline on the manifests fetched from GitHub.</p></div></aside>
     <main className="main"><header className="topbar"><div className="breadcrumbs">Workspace <ChevronRight size={14}/> <b>Repository analysis</b></div>
       <div className="top-right"><Badge tone="green">Local workspace</Badge></div></header>
@@ -81,7 +86,12 @@ function App() {
           <label className="url-field">Repository URL<input required type="url" value={url} onChange={e => setUrl(e.target.value)} placeholder="https://github.com/owner/repository"/></label>
           <label className="ref-field">Branch, tag or commit <span>(optional)</span><input value={ref} onChange={e => setRef(e.target.value)} placeholder="Default branch"/></label>
           <button disabled={busy} className="primary" type="submit">{busy ? <LoaderCircle className="spin" size={17}/> : <Search size={17}/>} {busy ? 'Scanning…' : 'Scan repository'}</button>
-        </form></section>
+        </form>
+        <div className="demo-row"><button type="button" disabled={busy} className="outline" onClick={() => start({demo: true})}>
+          <FlaskConical size={16}/> Scan the built-in demo app</button>
+          <span>Local, deliberately vulnerable app with a synthetic malicious package. No network, nothing is installed or run.</span></div>
+        <label className="option"><input type="checkbox" checked={injectFake} onChange={e => setInjectFake(e.target.checked)}/>
+          Hallucination test: inject a fabricated CVE claim and show the validator rejecting it</label></section>
         {error && <div className="notice error"><AlertTriangle size={19}/><div><strong>Scan problem</strong><p>{error}</p></div><button onClick={() => setError('')} aria-label="Dismiss">×</button></div>}
         {busy && <div className="notice progress"><LoaderCircle className="spin" size={19}/><div><strong>Analyzing repository</strong><p>{STAGES[status?.stage] || 'Starting'}… this can take a few minutes.</p></div></div>}
         {result && status ? <Results scanId={scanId} status={status} result={result} graph={graph}/> :

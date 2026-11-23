@@ -24,7 +24,7 @@ def _rule(finding: Finding) -> tuple[str, RiskLevel, FindingState]:
                 return CVE_RULES[level], level, affected
         return "R-CVE-U", RiskLevel.MEDIUM, investigation
     kind = finding.anomaly_type
-    if kind in {"suspected_typosquat", "install_script_change"}:
+    if kind in {"suspected_typosquat", "install_script_change", "unverified_install_script"}:
         return "R-AN-1", RiskLevel.HIGH, investigation
     if kind == "unexpected_dependency" or (
         kind == "unpinned_base_image" and finding.image_tag in {None, "", "latest", UNKNOWN}
@@ -48,5 +48,6 @@ def assess(finding: Finding, *, dev: bool | None = None) -> Finding:
         confidence = Confidence.HIGH
     return finding.model_copy(update={
         "risk_rule_id": rule, "risk_level": level, "state": state,
-        "confidence": confidence, "risk_note": note,
+        "confidence": confidence,
+        "risk_note": " ".join(n for n in (finding.risk_note, note) if n) or None,
     })

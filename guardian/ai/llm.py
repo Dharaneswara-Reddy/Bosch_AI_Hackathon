@@ -13,9 +13,20 @@ import re
 import socket
 import urllib.error
 import urllib.request
+from collections.abc import Mapping
+from pathlib import Path
 from typing import Any, Protocol
 
+from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_groq import ChatGroq
+from pydantic import SecretStr
+
 JsonObject = dict[str, Any]
+
+GROQ_DEFAULT_MODEL = "openai/gpt-oss-120b"
+USER_AGENT = "guardian/0.1 (+supply-chain-guardian)"
+PROVIDERS = ("none", "groq", "openai_compatible")
 
 
 class LLMError(Exception):
@@ -58,7 +69,9 @@ class OpenAICompatibleClient:
 
     name = "openai_compatible"
 
-    def __init__(self, base_url: str, api_key: str, model: str) -> None:
+    def __init__(
+        self, base_url: str, api_key: str, model: str, strict_schema: bool = False
+    ) -> None:
         if not base_url or not model:
             raise ValueError(
                 "GUARDIAN_LLM_BASE_URL and GUARDIAN_LLM_MODEL must be set for this provider."
@@ -66,12 +79,21 @@ class OpenAICompatibleClient:
         self._url = base_url.rstrip("/") + "/chat/completions"
         self._api_key = api_key
         self._model = model
+        self._strict_schema = strict_schema
+
+    def _response_format(self, schema: JsonObject) -> JsonObject:
+        if not self._strict_schema:
+            return {"type": "json_object"}
+        return {
+            "type": "json_schema",
+            "json_schema": {"name": "guardian_claims", "strict": True, "schema": schema},
+        }
 
     def complete(self, system: str, user: str, schema: JsonObject, timeout: float) -> JsonObject:
         body = {
             "model": self._model,
             "temperature": 0,
-            "response_format": {"type": "json_object"},
+            "response_format": self._response_format(schema),
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
         }
         payload = self._post(body, timeout)
@@ -82,7 +104,7 @@ class OpenAICompatibleClient:
         return parse_json_object(text)
 
     def _post(self, body: JsonObject, timeout: float) -> JsonObject:
-        headers = {"Content-Type": "application/json"}
+        headers = {"Content-Type": "application/json", "User-Agent": USER_AGENT}
         if self._api_key:
             headers["Authorization"] = f"Bearer {self._api_key}"
         request = urllib.request.Request(
@@ -95,13 +117,84 @@ class OpenAICompatibleClient:
         except TimeoutError as exc:
             raise LLMTimeout(f"No reply within {timeout:.0f}s.") from exc
         except urllib.error.HTTPError as exc:
-            raise LLMError(f"Provider returned HTTP {exc.code}.") from exc
+            raise _http_error(exc) from exc
         except urllib.error.URLError as exc:
             if isinstance(exc.reason, (TimeoutError, socket.timeout)):
                 raise LLMTimeout(f"No reply within {timeout:.0f}s.") from exc
             raise LLMError(f"Provider unreachable: {exc.reason}.") from exc
         except json.JSONDecodeError as exc:
             raise LLMBadResponse("Provider reply was not JSON.") from exc
+
+
+class LangChainChatClient:
+    """Adapter from any LangChain chat model to ``LLMClient``.
+
+    With ``strict_schema`` the agent's JSON Schema is sent as a strict
+    ``response_format`` so the provider constrains decoding to that shape.
+    Provider exceptions are mapped onto ``LLMError`` subclasses so the circuit
+    breaker can act on them; nothing is swallowed.
+    """
+
+    def __init__(self, model: BaseChatModel, name: str, strict_schema: bool = True) -> None:
+        self._model = model
+        self.name = name
+        self._strict_schema = strict_schema
+
+    def complete(self, system: str, user: str, schema: JsonObject, timeout: float) -> JsonObject:
+        runnable = (
+            self._model.bind(response_format=_strict_format(schema))
+            if (self._strict_schema)
+            else self._model
+        )
+        try:
+            message = runnable.invoke([SystemMessage(content=system), HumanMessage(content=user)])
+        except Exception as exc:  # noqa: BLE001 - re-raised as a typed LLMError
+            raise _provider_error(exc) from exc
+        return parse_json_object(str(message.content))
+
+
+def _strict_format(schema: JsonObject) -> JsonObject:
+    return {
+        "type": "json_schema",
+        "json_schema": {"name": "guardian_reply", "strict": True, "schema": schema},
+    }
+
+
+def _provider_error(exc: Exception) -> LLMError:
+    status = getattr(exc, "status_code", None)
+    if "timeout" in type(exc).__name__.lower():
+        return LLMTimeout("No reply within the deadline.")
+    if status == 400:
+        return LLMBadResponse("Provider rejected the reply as not matching the agent schema (400).")
+    hints = {401: " Check GUARDIAN_LLM_API_KEY.", 403: " Key lacks access.", 429: " Rate limited."}
+    if isinstance(status, int):
+        return LLMError(f"Provider returned HTTP {status}.{hints.get(status, '')}")
+    return LLMError(f"Provider call failed: {type(exc).__name__}.")
+
+
+def groq_client(api_key: str, model: str = GROQ_DEFAULT_MODEL, timeout: float = 30.0) -> LLMClient:
+    """Groq through LangChain (``langchain-groq``), strict structured outputs, no SDK retries."""
+    if not api_key:
+        raise ValueError(
+            "GUARDIAN_LLM_PROVIDER=groq needs GUARDIAN_LLM_API_KEY (or GROQ_API_KEY) in .env "
+            "(create one at https://console.groq.com/keys), or set GUARDIAN_LLM_PROVIDER=none."
+        )
+    chat = ChatGroq(
+        model=model or GROQ_DEFAULT_MODEL,
+        api_key=SecretStr(api_key),
+        temperature=0,
+        max_retries=0,
+        timeout=timeout,
+    )
+    return LangChainChatClient(chat, name="groq")
+
+
+def _http_error(exc: urllib.error.HTTPError) -> LLMError:
+    """400 = the model broke the schema (retry once); anything else trips the circuit breaker."""
+    if exc.code == 400:
+        return LLMBadResponse("Provider rejected the reply as not matching the claim schema (400).")
+    hints = {401: " Check GROQ_API_KEY.", 403: " Key lacks access.", 429: " Rate limited."}
+    return LLMError(f"Provider returned HTTP {exc.code}.{hints.get(exc.code, '')}")
 
 
 _FENCE = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE)
@@ -122,11 +215,39 @@ def parse_json_object(text: str) -> JsonObject:
 def build_client(
     provider: str, model: str = "", api_key: str = "", base_url: str = ""
 ) -> LLMClient:
-    """Factory used by the runner with values from P5's settings."""
+    """Factory used by the runner. Raises ``ValueError`` (fail at startup) on bad settings."""
     if provider in ("", "none"):
         return NoneClient()
+    if provider == "groq":
+        return groq_client(api_key=api_key, model=model)
     if provider == "openai_compatible":
         return OpenAICompatibleClient(base_url=base_url, api_key=api_key, model=model)
     raise ValueError(
-        f"Unknown GUARDIAN_LLM_PROVIDER '{provider}'. Use 'none' or 'openai_compatible'."
+        f"Unknown GUARDIAN_LLM_PROVIDER '{provider}'. Use one of: {', '.join(PROVIDERS)}."
+    )
+
+
+def read_env_file(path: Path) -> dict[str, str]:
+    """Minimal ``.env`` reader (KEY=VALUE lines, # comments, optional quotes)."""
+    if not path.is_file():
+        return {}
+    values: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.removeprefix("export ").partition("=")
+        values[key.strip()] = value.strip().strip("\"'")
+    return values
+
+
+def client_from_env(env: Mapping[str, str]) -> LLMClient:
+    """Build the client from ``GUARDIAN_LLM_*`` / ``GROQ_API_KEY`` settings."""
+    provider = env.get("GUARDIAN_LLM_PROVIDER", "none").strip().lower()
+    api_key = env.get("GUARDIAN_LLM_API_KEY") or env.get("GROQ_API_KEY", "")
+    return build_client(
+        provider,
+        model=env.get("GUARDIAN_LLM_MODEL", ""),
+        api_key=api_key.strip(),
+        base_url=env.get("GUARDIAN_LLM_BASE_URL", ""),
     )

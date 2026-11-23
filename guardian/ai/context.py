@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from guardian.models import Component, Evidence, Finding
+from guardian.relevance import rank as relevance_rank
 
 RISK_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3}
 
@@ -65,9 +66,10 @@ class ReviewContext:
         return self.components.get(component_id)
 
     def top_findings(self, n: int) -> list[Finding]:
-        """Deterministic top-N by risk level, then finding ID."""
+        """Deterministic top-N by relevance verdict, then risk level, then finding ID."""
 
-        def key(f: Finding) -> tuple[int, str]:
-            return RISK_ORDER.get(as_text(f.risk_level).lower(), 4), f.finding_id
+        def key(f: Finding) -> tuple[int, int, str]:
+            risk = RISK_ORDER.get(as_text(f.risk_level).lower(), 4)
+            return relevance_rank(f), risk, f.finding_id
 
         return sorted(self.findings.values(), key=key)[:n]

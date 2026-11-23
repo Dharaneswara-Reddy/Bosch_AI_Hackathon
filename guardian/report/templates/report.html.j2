@@ -22,6 +22,11 @@ dt { font-weight:650 }
 dd { margin:0 0 .4rem; overflow-wrap:anywhere }
 code,pre { white-space:pre-wrap; overflow-wrap:anywhere }
 .warning { color:#8e3012; font-weight:650 }
+.chain { font-family:ui-monospace,monospace; font-size:.9rem }
+.edge { color:#5b6b7e; font-size:.8rem }
+.verdict { display:inline-block; padding:.1rem .5rem; border-radius:1rem; font-size:.8rem; font-weight:650; background:#e8eef5 }
+.v-relevant { background:#fde2df; color:#8e1d12 } .v-likely_relevant { background:#fdf0d5; color:#7a4a00 }
+.v-low_relevance { background:#e3f3e8; color:#1d5e33 } .v-unknown { background:#e8eef5; color:#33475e }
 </style>
 </head>
 <body>
@@ -41,17 +46,12 @@ code,pre { white-space:pre-wrap; overflow-wrap:anywhere }
 </dl>
 </header>
 <nav aria-label="Report sections">
-<a href="#inventory">Inventory</a><a href="#paths">Dependency paths</a><a href="#vulnerabilities">Advisories</a><a href="#anomalies">Anomalies</a><a href="#coverage">Coverage</a><a href="#ai">AI claims</a>
+<a href="#inventory">SBOM</a><a href="#paths">How vulnerabilities enter</a><a href="#vulnerabilities">Ranked by relevance</a><a href="#suspicious">Suspicious packages</a><a href="#ai">AI analysis</a><a href="#fixes">Fix proposals</a><a href="#trace">Agent trace</a><a href="#coverage">Coverage</a><a href="#unknowns">Unknowns</a>
 </nav>
 <main>
-<section id="inventory"><h2>Inventory</h2>
+<section id="inventory"><h2>SBOM and inventory</h2>
 <p>{{ components|length }} graph components. {% if has_sbom %}<a href="sbom.cdx.json" download>Download CycloneDX SBOM</a>{% else %}SBOM unavailable.{% endif %}</p>
 <ul>{% for name, row in coverage.ecosystems.items() %}<li>{{ name }} — {{ row.components }} components</li>{% endfor %}</ul>
-</section>
-<section id="paths"><h2>Dependency paths</h2>
-<p>Runtime reachability is UNKNOWN.</p>
-{% for finding in paths %}<p>{{ finding.advisory_id or finding.anomaly_type or finding.component_id }} — {% for node in finding.dependency_path %}{{ components[node].name if node in components else node }}{% if not loop.last %} → {% endif %}{% endfor %}{% if finding.path_count is number %} ({{ finding.path_count }} paths){% endif %}</p>
-{% else %}<p>No dependency paths recorded.</p>{% endfor %}
 </section>
 {% macro evidence_for(ids) %}
 {% if ids %}<ul>
@@ -68,25 +68,59 @@ code,pre { white-space:pre-wrap; overflow-wrap:anywhere }
 {% endmacro %}
 {% macro risk(finding) %}
 <p>Risk <strong>{{ finding.risk_level or "UNKNOWN" }}</strong> · Rule {{ finding.risk_rule_id or "UNKNOWN" }} · Confidence {{ finding.confidence or "UNKNOWN" }} · State {{ finding.state }}.</p>
-{% if finding.risk_note is defined and finding.risk_note %}<p>{{ finding.risk_note }}</p>{% endif %}
+{% if finding.risk_note is defined and finding.risk_note %}<p class="warning">{{ finding.risk_note }}</p>{% endif %}
 {% endmacro %}
-<section id="vulnerabilities"><h2>Advisories</h2>
+{% macro verdict(finding) %}{% if finding.relevance %}<span class="verdict v-{{ finding.relevance.verdict }}">{{ finding.relevance.verdict|replace("_", " ") }}</span>{% else %}<span class="verdict v-unknown">not assessed</span>{% endif %}{% endmacro %}
+<section id="paths"><h2>How each vulnerability enters the application</h2>
+<p>Every hop comes from the lockfile resolver or the SBOM; the label after each arrow shows which. Paths that could not be resolved are shown as UNKNOWN.</p>
+{% for row in entries %}{% set finding = row.finding %}
+<article><h3>{{ finding.advisory_id or finding.purl }} {{ verdict(finding) }}</h3>
+<p class="chain">{% for hop in row.hops %}{{ hop.label }}{% if hop.edge %} <span class="edge">→ ({{ hop.edge }})</span> {% endif %}{% else %}UNKNOWN path{% endfor %}</p>
+<p>Introduced by <strong>{{ row.introduced_by or "UNKNOWN" }}</strong> · {{ finding.path_count if finding.path_count is number else "UNKNOWN" }} path(s) into the application.</p></article>
+{% else %}<p>No vulnerabilities to trace.</p>{% endfor %}
+</section>
+<section id="vulnerabilities"><h2>Vulnerabilities ranked by relevance</h2>
+<p>Relevance is decided by code from recorded signals: relevant, likely relevant, unknown, low relevance. It never declares a finding safe.</p>
 {% for finding in findings %}
 {% set component = components.get(finding.component_id) %}
-<details><summary>{{ finding.advisory_id or "UNKNOWN" }} — {{ component.name if component else finding.component_id }}</summary>
-<p>Affected version {{ component.version if component else "UNKNOWN" }} · Fix {{ finding.fixed_versions|join(", ") or "UNKNOWN" }} · Aliases {{ finding.aliases|join(", ") or "UNKNOWN" }}.</p>
-<p>Source severity {{ finding.source_severity }} · Confirmed by {{ finding.confirmed_by|join(" + ") or "UNKNOWN" }}.</p>
-{% if finding.severities is defined and finding.severities %}<ul>{% for source, severity in finding.severities.items() %}<li>{{ source }} — {{ severity }}</li>{% endfor %}</ul>{% endif %}
+<details{% if loop.first %} open{% endif %}><summary>{{ verdict(finding) }} {{ finding.advisory_id or "UNKNOWN" }} — {{ component.name if component else finding.purl }} {{ component.version if component else "" }}</summary>
+{% if finding.relevance %}<p>{{ finding.relevance.summary }}</p>
+<div class="table"><table><thead><tr><th>Signal</th><th>Value</th><th>Detail</th><th>Evidence</th></tr></thead><tbody>
+{% for signal in finding.relevance.signals %}<tr><td>{{ signal.name|replace("_", " ") }}</td><td><strong>{{ signal.value }}</strong></td><td>{{ signal.detail }}</td><td>{% for id in signal.evidence_ids %}<code>{{ id[:12] }}</code> {% else %}—{% endfor %}</td></tr>{% endfor %}
+</tbody></table></div>{% endif %}
+<p>Fix {{ finding.fixed_versions|join(", ") or "UNKNOWN" }} · Aliases {{ finding.aliases|join(", ") or "UNKNOWN" }} · Source severity {{ finding.source_severity }} · Confirmed by {{ finding.confirmed_by|join(" + ") or "UNKNOWN" }}.</p>
 {{ risk(finding) }}
 {{ evidence_for(finding.evidence_ids) }}
 </details>
-{% else %}<p>No advisories reported. See coverage for scan completeness.</p>{% endfor %}
+{% else %}<p>No vulnerabilities reported. This is not proof the application is safe; see coverage.</p>{% endfor %}
 </section>
-<section id="anomalies"><h2>Anomalies</h2>
-{% for finding in anomalies %}<article><h3>{{ finding.anomaly_type or "UNKNOWN" }}</h3>
-<p>{{ finding.component_id if finding.component_id else "UNKNOWN" }}</p>
+<section id="suspicious"><h2>Suspicious and malicious packages</h2>
+<p>Non-CVE risks found by rules. Packages marked SYNTHETIC are inert test fixtures.</p>
+{% for finding in suspicious %}<article><h3>{{ finding.anomaly_type or "malicious package" }} — {{ finding.purl }}</h3>
 {{ risk(finding) }}{{ evidence_for(finding.evidence_ids) }}</article>
-{% else %}<p>No anomalies reported. See coverage for detector results.</p>{% endfor %}
+{% else %}<p>No suspicious packages reported. See coverage for detector results.</p>{% endfor %}
+</section>
+<section id="ai"><h2>AI analysis</h2>
+<p>AI status {{ scan.llm_status }}. Every claim below was checked by code against the evidence it cites.</p>
+{% for title, claims in [("Accepted evidence claims", accepted), ("AI inferences", inferences), ("Rejected claims", rejected)] %}
+<h3>{{ title }}</h3>{% for claim in claims %}<article><p><strong>{{ claim.step|replace("_", " ") }}:</strong> {{ claim.text }}</p>
+{% if claim.rejected_reason %}<p>Reason: {{ claim.rejected_reason }}</p>{% endif %}
+{% if claim.uncertainty and claim.uncertainty != "UNKNOWN" %}<p>Uncertainty: {{ claim.uncertainty }}</p>{% endif %}
+{% if claim.evidence_ids %}{{ evidence_for(claim.evidence_ids) }}{% endif %}
+</article>{% else %}<p>None recorded.</p>{% endfor %}
+{% endfor %}
+</section>
+<section id="fixes"><h2>Fix proposals (human approval required)</h2>
+<p>Nothing is applied automatically. Each proposal must be approved, then built, tested and rescanned in a sandbox branch.</p>
+{% for claim in fixes %}<article><p><strong>{{ "Proposed" if claim.validated else "Rejected" }}:</strong> {{ claim.text }}</p>
+{% if claim.rejected_reason %}<p>Reason: {{ claim.rejected_reason }}</p>{% endif %}
+{% if claim.uncertainty %}<p>{{ claim.uncertainty }}</p>{% endif %}</article>
+{% else %}<p>No fix proposals (AI review off, failed, or no finding passed validation).</p>{% endfor %}
+</section>
+<section id="trace"><h2>Agent trace</h2>
+{% if trace %}<div class="table"><table><thead><tr><th>Agent</th><th>Consumed</th><th>Produced</th><th>Accepted</th><th>Rejected</th><th>LLM calls</th><th>Note</th></tr></thead><tbody>
+{% for step in trace %}<tr><td>{{ step.agent|replace("_", " ") }}</td><td>{{ step.consumed|length }}</td><td>{{ step.produced|length }}</td><td>{{ step.accepted }}</td><td>{{ step.rejected }}</td><td>{{ step.llm_calls }}</td><td>{{ step.error or "" }}</td></tr>{% endfor %}
+</tbody></table></div>{% else %}<p>The AI review did not run for this scan.</p>{% endif %}
 </section>
 <section id="coverage"><h2>Coverage</h2>
 {% for warning in coverage.warnings %}<p class="warning">{{ warning }}</p>{% endfor %}
@@ -97,15 +131,8 @@ code,pre { white-space:pre-wrap; overflow-wrap:anywhere }
 {% for row in coverage.rows %}<tr><td>{{ row.detector }}</td><td>{{ row.ecosystem }}</td><td>{{ row.status }}</td><td>{{ row.components_seen }}</td><td>{{ row.reason or "UNKNOWN" }}</td></tr>{% endfor %}
 </tbody></table></div>{% else %}<p>No detector coverage recorded.</p>{% endif %}
 </section>
-<section id="ai"><h2>AI claims</h2>
-<p>AI status {{ scan.llm_status }}.</p>
-{% for title, claims in [("Accepted evidence claims", accepted), ("AI inferences", inferences), ("Rejected claims", rejected)] %}
-<h3>{{ title }}</h3>{% for claim in claims %}<article><p>{{ claim.text }}</p>
-{% if claim.rejected_reason %}<p>Reason: {{ claim.rejected_reason }}</p>{% endif %}
-{% if claim.uncertainty and claim.uncertainty != "UNKNOWN" %}<p>Uncertainty: {{ claim.uncertainty }}</p>{% endif %}
-{% if claim.evidence_ids %}{{ evidence_for(claim.evidence_ids) }}{% endif %}
-</article>{% else %}<p>None recorded.</p>{% endfor %}
-{% endfor %}
+<section id="unknowns"><h2>Remaining unknowns and limitations</h2>
+<ul>{% for item in unknowns %}<li>{{ item }}</li>{% endfor %}</ul>
 </section>
 </main>
 </body>

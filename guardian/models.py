@@ -80,6 +80,19 @@ class ClaimKind(StrEnum):
     INFERENCE = "inference"
 
 
+class RelevanceVerdict(StrEnum):
+    RELEVANT = "relevant"
+    LIKELY_RELEVANT = "likely_relevant"
+    LOW_RELEVANCE = "low_relevance"
+    UNKNOWN = "unknown"
+
+
+class Reachability(StrEnum):
+    CONFIRMED = "confirmed"
+    NOT_DETECTED = "not_detected"
+    UNKNOWN = "unknown"
+
+
 class CoverageStatus(StrEnum):
     FINDING = "finding"
     PASS = "pass"
@@ -144,6 +157,26 @@ class Evidence(BaseModel):
     db_built_at: str = UNKNOWN
 
 
+class RelevanceSignal(BaseModel):
+    """One evidence-backed fact used to decide whether a finding matters."""
+
+    name: str
+    value: str
+    detail: str = ""
+    evidence_ids: list[str] = Field(default_factory=list)
+
+
+class Relevance(BaseModel):
+    """Code-computed relevance of a vulnerability or malicious-package finding."""
+
+    verdict: RelevanceVerdict = RelevanceVerdict.UNKNOWN
+    reachability: Reachability = Reachability.UNKNOWN
+    introduced_by: str | None = None
+    path_labels: list[str] = Field(default_factory=list)
+    signals: list[RelevanceSignal] = Field(default_factory=list)
+    summary: str = ""
+
+
 class Finding(BaseModel):
     finding_id: str
     kind: FindingKind
@@ -166,6 +199,7 @@ class Finding(BaseModel):
     confidence: Confidence | None = None
     image_tag: str | None = None
     risk_note: str | None = None
+    relevance: Relevance | None = None
 
 
 class AgentClaim(BaseModel):
@@ -177,6 +211,18 @@ class AgentClaim(BaseModel):
     validated: bool = False
     rejected_reason: str | None = None
     uncertainty: str | None = None
+
+
+class AgentTrace(BaseModel):
+    """One agent hand-off: what it consumed, what it produced, how much was accepted."""
+
+    agent: str
+    consumed: list[str] = Field(default_factory=list)
+    produced: list[str] = Field(default_factory=list)
+    accepted: int = 0
+    rejected: int = 0
+    llm_calls: int = 0
+    error: str | None = None
 
 
 class CoverageRow(BaseModel):
@@ -196,6 +242,7 @@ class FindingsArtifact(BaseModel):
     findings: list[Finding] = Field(default_factory=list)
     evidence: list[Evidence] = Field(default_factory=list)
     claims: list[AgentClaim] = Field(default_factory=list)
+    agent_trace: list[AgentTrace] = Field(default_factory=list)
 
 
 class EcosystemCoverage(BaseModel):

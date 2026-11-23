@@ -1,0 +1,143 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+import pytest
+from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
+from langchain_core.messages import AIMessage
+from langchain_groq import ChatGroq
+
+from guardian.ai.llm import (
+    LangChainChatClient,
+    LLMBadResponse,
+    LLMError,
+    LLMTimeout,
+    NoneClient,
+    client_from_env,
+    groq_client,
+    read_env_file,
+)
+from guardian.ai.schemas import (
+    STRICT_CRITIC_SCHEMA,
+    STRICT_PLANNER_SCHEMA,
+    STRICT_REPLY_SCHEMA,
+    CriticReply,
+    LLMReply,
+    PlannerReply,
+)
+
+KEY = "gsk_test_not_a_real_key_0123456789"
+REPLY = {"claims": [{"text": "x", "evidence_ids": ["e1"], "kind": "evidence", "uncertainty": None}]}
+
+
+class _Failing(GenericFakeChatModel):
+    error: Any = None
+
+    def _generate(self, *args: Any, **kwargs: Any) -> Any:
+        raise self.error
+
+
+class _StatusError(Exception):
+    def __init__(self, status_code: int) -> None:
+        super().__init__("boom")
+        self.status_code = status_code
+
+
+class APITimeoutError(Exception):
+    pass
+
+
+def test_langchain_adapter_parses_reply() -> None:
+    fake = GenericFakeChatModel(messages=iter([AIMessage(content=json.dumps(REPLY))]))
+    client = LangChainChatClient(fake, name="fake", strict_schema=False)
+    assert LLMReply.model_validate(client.complete("s", "u", STRICT_REPLY_SCHEMA, 5)).claims
+
+
+def test_groq_client_is_langchain_chatgroq_with_strict_schema_and_no_retries() -> None:
+    client = groq_client(api_key=KEY)
+    assert isinstance(client, LangChainChatClient)
+    chat = client._model
+    assert isinstance(chat, ChatGroq)
+    assert chat.model_name == "openai/gpt-oss-120b"
+    assert chat.max_retries == 0 and (chat.temperature or 0) < 1e-6
+    assert client._strict_schema
+
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (_StatusError(400), LLMBadResponse),
+        (_StatusError(401), LLMError),
+        (_StatusError(429), LLMError),
+        (APITimeoutError(), LLMTimeout),
+    ],
+)
+def test_provider_errors_are_mapped(error: Exception, expected: type[LLMError]) -> None:
+    client = LangChainChatClient(
+        _Failing(messages=iter([]), error=error), name="f", strict_schema=False
+    )
+    with pytest.raises(expected) as info:
+        client.complete("s", "u", STRICT_REPLY_SCHEMA, 5)
+    if expected is LLMError:
+        assert not isinstance(info.value, LLMBadResponse)
+    assert KEY not in str(info.value)
+
+
+@pytest.mark.parametrize(
+    ("schema", "model", "sample"),
+    [
+        (STRICT_REPLY_SCHEMA, LLMReply, REPLY),
+        (
+            STRICT_CRITIC_SCHEMA,
+            CriticReply,
+            {"reviews": [{"claim_id": "c", "verdict": "supported", "reason": "ok"}]},
+        ),
+        (
+            STRICT_PLANNER_SCHEMA,
+            PlannerReply,
+            {
+                "proposals": [
+                    {
+                        "finding_id": "f",
+                        "action": "upgrade",
+                        "target_version": "1.0.0",
+                        "rationale": "r",
+                        "rollback": "b",
+                        "breaking_change_risk": "low",
+                        "evidence_ids": ["e"],
+                    }
+                ]
+            },
+        ),
+    ],
+)
+def test_strict_schemas_match_reply_models(
+    schema: dict[str, Any], model: Any, sample: dict[str, Any]
+) -> None:
+    model.model_validate(sample)
+    item = next(iter(schema["properties"].values()))["items"]
+    assert (
+        set(item["required"])
+        == set(item["properties"])
+        == set(
+            model.model_fields[next(iter(model.model_fields))].annotation.__args__[0].model_fields
+        )
+    )
+    assert item["additionalProperties"] is False
+
+
+def test_client_from_env(tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text(f'# comment\nGUARDIAN_LLM_PROVIDER=groq\nGROQ_API_KEY="{KEY}"\n')
+    assert isinstance(client_from_env(read_env_file(env_file)), LangChainChatClient)
+    assert isinstance(client_from_env({}), NoneClient)
+    assert read_env_file(tmp_path / "missing.env") == {}
+
+
+def test_groq_without_key_fails_at_startup_with_actionable_message() -> None:
+    with pytest.raises(ValueError, match="GUARDIAN_LLM_API_KEY"):
+        client_from_env({"GUARDIAN_LLM_PROVIDER": "groq"})
+    with pytest.raises(ValueError, match="Unknown GUARDIAN_LLM_PROVIDER"):
+        client_from_env({"GUARDIAN_LLM_PROVIDER": "gpt"})

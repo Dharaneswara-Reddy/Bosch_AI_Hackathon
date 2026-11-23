@@ -1,0 +1,12 @@
+[
+  {
+    "kind": "anomaly",
+    "anomaly_type": "unexpected_dependency",
+    "purl": "pkg:npm/local-build-helper"
+  },
+  {
+    "kind": "anomaly",
+    "anomaly_type": "unverified_install_script",
+    "purl": "pkg:npm/local-build-helper"
+  }
+]

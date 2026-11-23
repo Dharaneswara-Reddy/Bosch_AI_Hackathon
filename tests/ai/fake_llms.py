@@ -2,26 +2,44 @@
 
 from __future__ import annotations
 
+import re
 import time
 from typing import Any
 
 from guardian.ai.llm import LLMError
 
+_AGENT = re.compile(r"^Agent: (\w+)", re.MULTILINE)
 
-class ScriptedLLM:
-    """Returns the given replies in order (the last one repeats) and records every prompt."""
 
-    name = "scripted"
+class RoutingLLM:
+    """Answers per agent (read from the system prompt) and records every call.
 
-    def __init__(self, *replies: dict[str, Any]) -> None:
-        self.replies = list(replies)
-        self.prompts: list[tuple[str, str]] = []
+    ``replies[agent]`` is a list; the last reply repeats. Agents without a
+    scripted reply get an empty, schema-valid answer.
+    """
+
+    name = "routing"
+    EMPTY = {"claims": [], "reviews": [], "proposals": []}
+
+    def __init__(self, **replies: list[dict[str, Any]]) -> None:
+        self.replies = replies
+        self.calls: list[tuple[str, str, str]] = []
 
     def complete(
         self, system: str, user: str, schema: dict[str, Any], timeout: float
     ) -> dict[str, Any]:
-        self.prompts.append((system, user))
-        return self.replies[min(len(self.prompts) - 1, len(self.replies) - 1)]
+        match = _AGENT.search(system)
+        agent = match.group(1) if match else "unknown"
+        self.calls.append((agent, system, user))
+        scripted = self.replies.get(agent)
+        if not scripted:
+            key = next(iter(schema["properties"]))
+            return {key: []}
+        count = sum(1 for a, _, _ in self.calls if a == agent)
+        return scripted[min(count - 1, len(scripted) - 1)]
+
+    def agents_called(self) -> list[str]:
+        return [agent for agent, _, _ in self.calls]
 
 
 class SlowLLM:

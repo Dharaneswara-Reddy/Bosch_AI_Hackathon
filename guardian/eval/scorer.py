@@ -26,6 +26,7 @@ DETECTOR_FOR_TYPE: dict[str, str] = {
     "dependency_update": "sbom_diff",
     "suspected_typosquat": "typosquat",
     "install_script_change": "install_script",
+    "unverified_install_script": "unverified_source",
     "unpinned_base_image": "image_pin",
     "unpinned_ci_action": "ci_pin",
 }
