@@ -25,9 +25,23 @@ from guardian.config import Settings
 from guardian.coverage import build_coverage
 from guardian.evidence import EvidenceStore, file_sha256
 from guardian.models import (
-    UNKNOWN, AgentClaim, Component, CoverageArtifact, CoverageRow, CoverageStatus, Edge,
-    Evidence, Finding, FindingsArtifact, GraphArtifact, LlmStatus, Resolution, RunResult,
-    Scan, ScanStatus, Scope,
+    UNKNOWN,
+    AgentClaim,
+    Component,
+    CoverageArtifact,
+    CoverageRow,
+    CoverageStatus,
+    Edge,
+    Evidence,
+    Finding,
+    FindingsArtifact,
+    GraphArtifact,
+    LlmStatus,
+    Resolution,
+    RunResult,
+    Scan,
+    ScanStatus,
+    Scope,
 )
 from guardian.risk import assess
 from guardian.tools import ToolError
@@ -93,7 +107,8 @@ def _checkpoint(context: ScanContext) -> None:
     findings = FindingsArtifact(
         findings=result.findings, evidence=result.evidence, claims=result.claims,
     )
-    for filename, data in zip(OUTPUT_FILES, (result.scan, result.graph, findings, result.coverage)):
+    artifacts = (result.scan, result.graph, findings, result.coverage)
+    for filename, data in zip(OUTPUT_FILES, artifacts, strict=True):
         _write_model(context.out / filename, data)
 
 
@@ -162,9 +177,12 @@ def _normalize_graph(path: Path, sbom: Path, graph: object) -> GraphArtifact:
         )
         for component in bom.components if component.ref or component.purl != UNKNOWN
     ]
-    edge_rows = getattr(graph, "edges")(data=True)
+    edge_rows = getattr(graph, "edges")(data=True)  # noqa: B009 - graph is typed as object
     edges = [
-        Edge(parent_id=str(parent), child_id=str(child), edge_source=attrs.get("edge_source", "sbom"))
+        Edge(
+            parent_id=str(parent), child_id=str(child),
+            edge_source=attrs.get("edge_source", "sbom"),
+        )
         for parent, child, attrs in edge_rows
     ]
     return GraphArtifact(nodes=nodes, edges=edges)
@@ -280,7 +298,7 @@ def _detectors(context: ScanContext) -> None:
             name = getattr(detector, "name", type(detector).__name__)
 
             def apply(active: ScanContext, plugin: object = detector) -> None:
-                result = getattr(plugin, "run")(active)
+                result = getattr(plugin, "run")(active)  # noqa: B009 - plugin is typed as object
                 findings = TypeAdapter(list[Finding]).validate_python(result.findings)
                 rows = TypeAdapter(list[CoverageRow]).validate_python(result.coverage_rows)
                 active.result.findings.extend(findings)
@@ -386,7 +404,8 @@ def _cache(context: ScanContext, clean_commit: bool) -> RunResult | None:
             return None
     except (OSError, ValidationError, UnicodeError):
         return None
-    previous.cached_age_minutes = max(0, (datetime.now(UTC) - previous.ended_at).total_seconds() / 60)
+    age = datetime.now(UTC) - previous.ended_at
+    previous.cached_age_minutes = max(0, age.total_seconds() / 60)
     _write_model(context.out / "run.json", previous)
     return RunResult(scan=previous, graph=graph, coverage=coverage, **artifacts.model_dump())
 
@@ -425,7 +444,8 @@ def _prepare(
     )
     result = RunResult(scan=record)
     claim_file = inject_claim.resolve(strict=True) if inject_claim else None
-    return ScanContext(local, out, baseline, settings, result, EvidenceStore(out), claim_file), clean
+    evidence = EvidenceStore(out)
+    return ScanContext(local, out, baseline, settings, result, evidence, claim_file), clean
 
 
 def scan(
@@ -453,7 +473,8 @@ def _output_lock(out: Path) -> Iterator[None]:
 
                 fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError as error:
-            raise RuntimeError(f"Another scan is writing to {out}, or it cannot be locked.") from error
+            message = f"Another scan is writing to {out}, or it cannot be locked."
+            raise RuntimeError(message) from error
         yield
 
 
