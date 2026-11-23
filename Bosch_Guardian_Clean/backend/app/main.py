@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
 from guardian.ai.llm import FALLBACK_PROVIDERS
+from guardian.changes import ChangeSummary
 from guardian.fetch import FetchError
 from guardian.models import GraphArtifact
 
@@ -79,7 +80,8 @@ def start_scan(request: ScanRequest, background: BackgroundTasks) -> ScanStarted
         record = (
             pipeline.create_demo_record(scan_base())
             if request.demo
-            else pipeline.create_record(request.url, request.ref, scan_base())
+            else pipeline.create_record(
+                request.url, request.ref, scan_base(), request.baseline_ref.strip())
         )
     except FetchError as error:
         raise HTTPException(422, str(error)) from error
@@ -100,6 +102,16 @@ def scan_status(scan_id: str) -> ScanRecord:
 @app.get("/scan/{scan_id}/result")
 def scan_result(scan_id: str) -> ScanResult:
     return pipeline.load_result(_finished(scan_id))
+
+
+@app.get("/scan/{scan_id}/changes")
+def scan_changes(scan_id: str) -> ChangeSummary:
+    record = _finished(scan_id)
+    path = record.work_dir / "out" / pipeline.CHANGES_FILE
+    if not path.is_file():
+        reason = record.errors.get("baseline") or "no baseline_ref was requested for this scan"
+        raise HTTPException(404, f"No change summary: {reason}")
+    return ChangeSummary.model_validate_json(path.read_text("utf-8"))
 
 
 @app.get("/scan/{scan_id}/graph")

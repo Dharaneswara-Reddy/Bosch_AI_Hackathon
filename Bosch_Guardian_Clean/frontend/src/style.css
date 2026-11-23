@@ -14,3 +14,19 @@ td small{color:#91a093}
 .review-chips{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}
 .review-note{width:100%;border:1px solid #dce6df;border-radius:7px;padding:9px 11px;font-size:12px;margin-bottom:12px;resize:vertical}
 .review-card button:disabled{opacity:.5;cursor:not-allowed}
+
+/* changes + why */
+.changes-panel { padding: 16px 18px; margin-bottom: 14px; }
+.changes-panel h2 { margin: 0 0 4px; font-size: 16px; }
+.changes-headline { margin: 0 0 12px; font-weight: 600; }
+.change-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+.change-group h3 { margin: 0 0 6px; font-size: 13px; }
+.change-group ul { margin: 0; padding-left: 18px; font-size: 13px; max-height: 160px; overflow: auto; }
+.change-group table { font-size: 13px; }
+.why-risk { margin: 0 0 10px; }
+.why-risk h4 { margin: 0 0 4px; font-size: 13px; }
+.why-chain { margin: 0 0 4px; line-height: 1.6; }
+.why-step { background: #eef5f0; border-radius: 6px; padding: 2px 7px; white-space: nowrap; display: inline-block; }
+.why-arrow { color: #6b7f74; }
+.why-adjust { margin: 0 0 4px; color: #92400e; }
+.why-meta { margin: 0 0 4px; font-size: 13px; }

@@ -226,3 +226,81 @@ def test_demo_scan_copies_the_local_demo_app_with_source(
 
 def test_url_is_required_unless_demo(client: TestClient) -> None:
     assert client.post("/scan", json={"url": ""}).status_code == 422
+
+
+def _graph_json(*packages: tuple[str, str]) -> str:
+    return json.dumps({"nodes": [
+        {"component_id": f"{n}@{v}", "purl": f"pkg:npm/{n}@{v}", "name": n, "version": v,
+         "ecosystem": "npm"} for n, v in packages]})
+
+
+def _baseline_scan_fakes(
+    monkeypatch: pytest.MonkeyPatch, fail_baseline: bool = False,
+) -> dict[str, dict[str, object]]:
+    calls: dict[str, dict[str, object]] = {}
+
+    def fetch(url: str, ref: str, dest: Path, token: str | None) -> Any:
+        result = _fake_fetch(url, ref, dest, token)
+        sha = "a" if "baseline" in str(dest) else "c"
+        result.ref, result.commit_sha = ref or "main", sha * 40
+        return result
+
+    def scan(target: Path, out: Path, **kwargs: object) -> RunResult:
+        is_baseline = out.parent.name == "baseline"
+        calls["baseline" if is_baseline else "main"] = dict(kwargs)
+        if is_baseline and fail_baseline:
+            raise RuntimeError("baseline scanner crashed")
+        result = _fake_scan(target, out)
+        (out / "graph.json").write_text(
+            _graph_json(("lodash", "4.17.0")) if is_baseline
+            else _graph_json(("lodash", "4.17.21"), ("left-pad", "1.0.0")))
+        return result
+
+    monkeypatch.setattr(pipeline, "fetch_repo_files", fetch)
+    monkeypatch.setattr(pipeline.runner, "scan", scan)
+    return calls
+
+
+def test_baseline_ref_adds_a_change_summary(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _baseline_scan_fakes(monkeypatch)
+    scan_id = client.post("/scan", json={
+        "url": "https://github.com/o/r", "ref": "main", "baseline_ref": "v1"}).json()["scan_id"]
+    assert calls["baseline"]["use_llm"] is False
+    assert isinstance(calls["main"]["baseline"], Path)
+    assert calls["main"]["baseline"].parts[-2:] == ("baseline", "out")
+    changes = client.get(f"/scan/{scan_id}/changes").json()
+    assert changes["baseline_ref"] == "v1" and changes["baseline_commit"] == "a" * 40
+    assert [p["name"] for p in changes["added"]] == ["left-pad"]
+    assert changes["upgraded"][0]["to_version"] == "4.17.21"
+    assert client.get(f"/scan/{scan_id}/result").json()["changes"]["baseline_ref"] == "v1"
+    assert client.get(f"/scan/{scan_id}").json()["baseline_ref"] == "v1"
+
+
+def test_failed_baseline_keeps_the_main_scan(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _baseline_scan_fakes(monkeypatch, fail_baseline=True)
+    scan_id = client.post("/scan", json={
+        "url": "https://github.com/o/r", "baseline_ref": "v1"}).json()["scan_id"]
+    status = client.get(f"/scan/{scan_id}").json()
+    assert "baseline scanner crashed" in status["errors"]["baseline"]
+    assert calls["main"].get("baseline") is None
+    assert client.get(f"/scan/{scan_id}/result").json()["changes"] is None
+    assert client.get(f"/scan/{scan_id}/changes").status_code == 404
+
+
+def test_changes_are_404_without_a_baseline(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _baseline_scan_fakes(monkeypatch)
+    scan_id = client.post("/scan", json={"url": "https://github.com/o/r"}).json()["scan_id"]
+    assert client.get(f"/scan/{scan_id}/changes").status_code == 404
+    assert client.get(f"/scan/{scan_id}/result").json()["changes"] is None
+
+
+def test_baseline_is_not_allowed_with_the_demo(client: TestClient) -> None:
+    response = client.post("/scan", json={"demo": True, "baseline_ref": "v1"})
+    assert response.status_code == 422
+    assert "baseline" in response.text.lower()

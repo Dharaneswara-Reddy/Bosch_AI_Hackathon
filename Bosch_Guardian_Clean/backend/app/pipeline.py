@@ -11,6 +11,7 @@ from uuid import uuid4
 
 from guardian import runner
 from guardian.ai.llm import read_env_file
+from guardian.changes import ChangeSummary, compute_changes
 from guardian.decisions import DecisionLog, apply_decisions, summarize
 from guardian.fetch import (
     MANIFEST_NAME,
@@ -21,7 +22,7 @@ from guardian.fetch import (
     parse_github_url,
     write_manifest,
 )
-from guardian.models import RunResult
+from guardian.models import FindingsArtifact, GraphArtifact, RunResult
 from guardian.prepare import generate_npm_lockfiles
 
 from .schemas import FetchSummary, ScanRecord, ScanResult
@@ -31,6 +32,7 @@ REPO_ROOT: Final = Path(__file__).resolve().parents[3]
 FAKE_CLAIM: Final = REPO_ROOT / "tests" / "fixtures" / "fake_cve_claim.json"
 DEMO_APP: Final = REPO_ROOT / "demo" / "vulnerable-app"
 DEMO_LABEL: Final = "Built-in demo app (demo/vulnerable-app, local, no network)"
+CHANGES_FILE: Final = "changes.json"
 DEMO_FILES: Final = frozenset({"package.json", "package-lock.json", "ci.yml"})
 
 
@@ -46,11 +48,12 @@ def ai_enabled() -> bool:
     return provider not in ("", "none") and bool(os.environ.get("GUARDIAN_LLM_API_KEY", "").strip())
 
 
-def create_record(url: str, ref: str, base: Path) -> ScanRecord:
+def create_record(url: str, ref: str, base: Path, baseline_ref: str = "") -> ScanRecord:
     owner, repo = parse_github_url(url)
     scan_id = uuid4().hex
     record = ScanRecord(
         scan_id=scan_id, repository_url=f"https://github.com/{owner}/{repo}", ref=ref,
+        baseline_ref=baseline_ref,
         created_at=datetime.now(UTC), work_dir=base / scan_id,
     )
     SCANS[scan_id] = record
@@ -106,6 +109,44 @@ def _fetch_and_prepare(record: ScanRecord, repo_dir: Path, token: str | None) ->
     return True
 
 
+def _scan_baseline(record: ScanRecord, token: str | None) -> tuple[Path, str] | None:
+    record.stage = "baseline"
+    base_dir = record.work_dir / "baseline"
+    try:
+        fetched = fetch_repo_files(record.repository_url, record.baseline_ref,
+                                   base_dir / "repo", token)
+        if not generate_npm_lockfiles(fetched).files:
+            raise FetchError(f"No dependency manifests found at baseline '{record.baseline_ref}'")
+        runner.scan(base_dir / "repo", base_dir / "out", use_llm=False)
+    except Exception as error:  # noqa: BLE001 - the main scan stays useful without a baseline
+        record.errors["baseline"] = f"{type(error).__name__}: {error}"
+        return None
+    return base_dir / "out", fetched.commit_sha
+
+
+def _read_artifacts(out: Path) -> tuple[GraphArtifact, FindingsArtifact]:
+    return (
+        GraphArtifact.model_validate_json((out / "graph.json").read_text(encoding="utf-8")),
+        FindingsArtifact.model_validate_json((out / "findings.json").read_text(encoding="utf-8")),
+    )
+
+
+def _write_changes(record: ScanRecord, baseline_out: Path, baseline_commit: str) -> None:
+    out = record.work_dir / "out"
+    old_graph, old_findings = _read_artifacts(baseline_out)
+    new_graph, new_findings = _read_artifacts(out)
+    changes = compute_changes(old_graph, new_graph, old_findings.findings, new_findings.findings,
+                              record.baseline_ref, baseline_commit)
+    (out / CHANGES_FILE).write_text(changes.model_dump_json(indent=2), encoding="utf-8")
+
+
+def _record_changes(record: ScanRecord, baseline_out: Path, baseline_commit: str) -> None:
+    try:
+        _write_changes(record, baseline_out, baseline_commit)
+    except (OSError, ValueError) as error:
+        record.errors["baseline"] = f"Could not compare with the baseline: {error}"
+
+
 def run_pipeline(record: ScanRecord, token: str | None, inject_fake_claim: bool = False) -> None:
     repo_dir = record.work_dir / "repo"
     out_dir = record.work_dir / "out"
@@ -115,9 +156,13 @@ def run_pipeline(record: ScanRecord, token: str | None, inject_fake_claim: bool 
             record.commit_sha = prepare_demo(repo_dir).commit_sha
         elif not _fetch_and_prepare(record, repo_dir, token):
             return
+        baseline = _scan_baseline(record, token) if record.baseline_ref else None
         record.stage = "scanning"
         inject = FAKE_CLAIM if inject_fake_claim else None
-        result = runner.scan(repo_dir, out_dir, use_llm=ai_enabled(), inject_claim=inject)
+        result = runner.scan(repo_dir, out_dir, baseline=baseline[0] if baseline else None,
+                             use_llm=ai_enabled(), inject_claim=inject)
+        if baseline:
+            _record_changes(record, *baseline)
         _apply_result(record, result)
     except FetchError as error:
         _fail(record, str(error))
@@ -147,9 +192,13 @@ def load_result(record: ScanRecord) -> ScanResult:
     counts: dict[str, int] = {}
     for finding in findings:
         counts[finding.risk_level.value] = counts.get(finding.risk_level.value, 0) + 1
+    changes_path = out / CHANGES_FILE
+    changes = (ChangeSummary.model_validate_json(changes_path.read_text(encoding="utf-8"))
+               if changes_path.is_file() else None)
     return ScanResult(
         scan=run.scan, findings=findings, evidence=run.evidence, coverage=run.coverage,
         counts_by_risk=counts, fetch=_fetch_summary(record), claims=run.claims,
         agent_trace=run.agent_trace, risk_adjustments=run.risk_adjustments,
         agreement=run.agreement, review_summary=summarize(run.findings, decisions),
+        changes=changes,
     )
