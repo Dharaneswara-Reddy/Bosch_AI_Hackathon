@@ -1,0 +1,420 @@
+{
+  "matches": [
+    {
+      "vulnerability": {
+        "id": "GHSA-xr9x-r78c-5hrm",
+        "dataSource": "https://github.com/advisories/GHSA-xr9x-r78c-5hrm",
+        "namespace": "github:language:ruby",
+        "severity": "Critical",
+        "urls": [
+          "https://github.com/rails/rails/security/advisories/GHSA-xr9x-r78c-5hrm",
+          "https://github.com/rails/rails/commit/1c01bb587206ee6eb0e1179c2cef96a6a47acb1e"
+        ],
+        "description": "Active Storage has possible arbitrary file read and remote code execution in Active Storage variant processing",
+        "fix": {
+          "versions": [
+            "8.0.5.1"
+          ],
+          "state": "fixed",
+          "available": [
+            {
+              "version": "8.0.5.1",
+              "date": "2026-07-31",
+              "kind": "first-observed"
+            }
+          ]
+        }
+      },
+      "relatedVulnerabilities": [
+        {
+          "id": "CVE-2026-66066",
+          "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-66066",
+          "namespace": "nvd:cpe",
+          "severity": "Critical",
+          "urls": [
+            "https://github.com/rails/rails/commit/1c01bb587206ee6eb0e1179c2cef96a6a47acb1e"
+          ],
+          "description": "Action Pack is a framework for handling and responding to web requests. In versions prior to 7.2.3.2, 8.0.5.1 and 8.1.3.1, Active Storage does not disable libvips operations marked unsafe for untrusted content, allowing a crafted upload to invoke such an operation. Consuming applications are affected when configured to use libvips and accept image uploads from untrusted users. An unauthenticated attacker may exploit this behavior to read arbitrary files accessible to the Rails process, including environment variables and application secrets. Exposure of credentials such as secret_key_base or external-service tokens may enable remote code execution or lateral movement. This issue has been fixed in versions 7.2.3.2, 8.0.5.1 and 8.1.3.1."
+        }
+      ],
+      "matchDetails": [
+        {
+          "type": "exact-direct-match",
+          "matcher": "ruby-gem-matcher",
+          "searchedBy": {
+            "language": "ruby",
+            "namespace": "github:language:ruby",
+            "package": {
+              "name": "activestorage",
+              "version": "8.0.4"
+            }
+          },
+          "found": {
+            "vulnerabilityID": "GHSA-xr9x-r78c-5hrm",
+            "versionConstraint": ">=8.0.0.beta1,<8.0.5.1 (gem)"
+          },
+          "fix": {
+            "suggestedVersion": "8.0.5.1"
+          }
+        }
+      ],
+      "artifact": {
+        "id": "39dd620be5d91601",
+        "name": "activestorage",
+        "version": "8.0.4",
+        "type": "gem",
+        "language": "ruby",
+        "licenses": [],
+        "cpes": [
+          "cpe:2.3:a:activestorage:activestorage:8.0.4:*:*:*:*:*:*:*"
+        ],
+        "purl": "pkg:gem/activestorage@8.0.4",
+        "upstreams": []
+      }
+    },
+    {
+      "vulnerability": {
+        "id": "GHSA-3m6g-2423-7cp3",
+        "dataSource": "https://github.com/advisories/GHSA-3m6g-2423-7cp3",
+        "namespace": "github:language:ruby",
+        "severity": "High",
+        "urls": [
+          "https://github.com/ruby/json/security/advisories/GHSA-3m6g-2423-7cp3",
+          "https://nvd.nist.gov/vuln/detail/CVE-2026-33210"
+        ],
+        "description": "Ruby JSON has a format string injection vulnerability",
+        "fix": {
+          "versions": [
+            "2.19.2"
+          ],
+          "state": "fixed",
+          "available": [
+            {
+              "version": "2.19.2",
+              "date": "2026-03-19",
+              "kind": "first-observed"
+            }
+          ]
+        }
+      },
+      "relatedVulnerabilities": [
+        {
+          "id": "CVE-2026-33210",
+          "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-33210",
+          "namespace": "nvd:cpe",
+          "severity": "Critical",
+          "urls": [
+            "https://github.com/ruby/json/security/advisories/GHSA-3m6g-2423-7cp3"
+          ],
+          "description": "Ruby JSON is a JSON implementation for Ruby. From version 2.14.0 to before versions 2.15.2.1, 2.17.1.2, and 2.19.2, a format string injection vulnerability can lead to denial of service attacks or information disclosure, when the allow_duplicate_key: false parsing option is used to parse user supplied documents. This issue has been patched in versions 2.15.2.1, 2.17.1.2, and 2.19.2."
+        }
+      ],
+      "matchDetails": [
+        {
+          "type": "exact-direct-match",
+          "matcher": "ruby-gem-matcher",
+          "searchedBy": {
+            "language": "ruby",
+            "namespace": "github:language:ruby",
+            "package": {
+              "name": "json",
+              "version": "2.18.0"
+            }
+          },
+          "found": {
+            "vulnerabilityID": "GHSA-3m6g-2423-7cp3",
+            "versionConstraint": ">=2.18.0,<2.19.2 (gem)"
+          },
+          "fix": {
+            "suggestedVersion": "2.19.2"
+          }
+        }
+      ],
+      "artifact": {
+        "id": "7a0975625f175c6d",
+        "name": "json",
+        "version": "2.18.0",
+        "type": "gem",
+        "language": "ruby",
+        "licenses": [],
+        "cpes": [
+          "cpe:2.3:a:json_project:json:2.18.0:*:*:*:*:ruby:*:*"
+        ],
+        "purl": "pkg:gem/json@2.18.0",
+        "upstreams": []
+      }
+    },
+    {
+      "vulnerability": {
+        "id": "GHSA-2j26-frm8-cmj9",
+        "dataSource": "https://github.com/advisories/GHSA-2j26-frm8-cmj9",
+        "namespace": "github:language:ruby",
+        "severity": "Medium",
+        "urls": [
+          "https://github.com/rails/rails/security/advisories/GHSA-2j26-frm8-cmj9",
+          "https://github.com/rails/rails/commit/19dbab51ca086a657bb86458042bc44314916bcb"
+        ],
+        "description": "Rails Active Support has a possible DoS vulnerability in its number helpers",
+        "fix": {
+          "versions": [
+            "8.0.4.1"
+          ],
+          "state": "fixed",
+          "available": [
+            {
+              "version": "8.0.4.1",
+              "date": "2026-03-24",
+              "kind": "first-observed"
+            }
+          ]
+        }
+      },
+      "relatedVulnerabilities": [
+        {
+          "id": "CVE-2026-33176",
+          "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-33176",
+          "namespace": "nvd:cpe",
+          "severity": "High",
+          "urls": [
+            "https://github.com/rails/rails/commit/19dbab51ca086a657bb86458042bc44314916bcb"
+          ],
+          "description": "Active Support is a toolkit of support libraries and Ruby core extensions extracted from the Rails framework. Prior to versions 8.1.2.1, 8.0.4.1, and 7.2.3.1, Active Support number helpers accept strings containing scientific notation (e.g. `1e10000`), which `BigDecimal` expands into extremely large decimal representations. This can cause excessive memory allocation and CPU consumption when the expanded number is formatted, possibly resulting in a DoS vulnerability. Versions 8.1.2.1, 8.0.4.1, and 7.2.3.1 contain a patch."
+        }
+      ],
+      "matchDetails": [
+        {
+          "type": "exact-direct-match",
+          "matcher": "ruby-gem-matcher",
+          "searchedBy": {
+            "language": "ruby",
+            "namespace": "github:language:ruby",
+            "package": {
+              "name": "activesupport",
+              "version": "8.0.4"
+            }
+          },
+          "found": {
+            "vulnerabilityID": "GHSA-2j26-frm8-cmj9",
+            "versionConstraint": ">=8.0.0.beta1,<8.0.4.1 (gem)"
+          },
+          "fix": {
+            "suggestedVersion": "8.0.4.1"
+          }
+        }
+      ],
+      "artifact": {
+        "id": "97540df1f3289fe0",
+        "name": "activesupport",
+        "version": "8.0.4",
+        "type": "gem",
+        "language": "ruby",
+        "licenses": [],
+        "cpes": [
+          "cpe:2.3:a:activesupport_project:activesupport:8.0.4:*:*:*:*:ruby:*:*"
+        ],
+        "purl": "pkg:gem/activesupport@8.0.4",
+        "upstreams": []
+      }
+    },
+    {
+      "vulnerability": {
+        "id": "GHSA-5prr-v3j2-97mh",
+        "dataSource": "https://github.com/advisories/GHSA-5prr-v3j2-97mh",
+        "namespace": "github:language:ruby",
+        "severity": "Medium",
+        "urls": [
+          "https://github.com/sparklemotion/nokogiri/security/advisories/GHSA-5prr-v3j2-97mh"
+        ],
+        "description": "Nokogiri: Possible Out-of-Bounds Read in `Nokogiri::XML::NodeSet#[]`",
+        "fix": {
+          "versions": [
+            "1.19.4"
+          ],
+          "state": "fixed",
+          "available": [
+            {
+              "version": "1.19.4",
+              "date": "2026-06-19",
+              "kind": "first-observed"
+            }
+          ]
+        }
+      },
+      "relatedVulnerabilities": [],
+      "matchDetails": [
+        {
+          "type": "exact-direct-match",
+          "matcher": "ruby-gem-matcher",
+          "searchedBy": {
+            "language": "ruby",
+            "namespace": "github:language:ruby",
+            "package": {
+              "name": "nokogiri",
+              "version": "1.19.0"
+            }
+          },
+          "found": {
+            "vulnerabilityID": "GHSA-5prr-v3j2-97mh",
+            "versionConstraint": "<1.19.4 (gem)"
+          },
+          "fix": {
+            "suggestedVersion": "1.19.4"
+          }
+        }
+      ],
+      "artifact": {
+        "id": "d65c21313c75fb3c",
+        "name": "nokogiri",
+        "version": "1.19.0",
+        "type": "gem",
+        "language": "ruby",
+        "licenses": [],
+        "cpes": [
+          "cpe:2.3:a:nokogiri:nokogiri:1.19.0:*:*:*:*:ruby:*:*"
+        ],
+        "purl": "pkg:gem/nokogiri@1.19.0",
+        "upstreams": []
+      }
+    },
+    {
+      "vulnerability": {
+        "id": "GHSA-nofx-0000-0001",
+        "dataSource": "https://github.com/advisories/GHSA-2j26-frm8-cmj9",
+        "namespace": "github:language:ruby",
+        "severity": "Medium",
+        "urls": [
+          "https://github.com/rails/rails/security/advisories/GHSA-2j26-frm8-cmj9",
+          "https://github.com/rails/rails/commit/19dbab51ca086a657bb86458042bc44314916bcb"
+        ],
+        "description": "Rails Active Support has a possible DoS vulnerability in its number helpers",
+        "fix": {
+          "versions": [],
+          "state": "not-fixed"
+        }
+      },
+      "relatedVulnerabilities": [],
+      "matchDetails": [
+        {
+          "type": "exact-direct-match",
+          "matcher": "ruby-gem-matcher",
+          "searchedBy": {
+            "language": "ruby",
+            "namespace": "github:language:ruby",
+            "package": {
+              "name": "activesupport",
+              "version": "8.0.4"
+            }
+          },
+          "found": {
+            "vulnerabilityID": "GHSA-2j26-frm8-cmj9",
+            "versionConstraint": ">=8.0.0.beta1,<8.0.4.1 (gem)"
+          },
+          "fix": {
+            "suggestedVersion": "8.0.4.1"
+          }
+        }
+      ],
+      "artifact": {
+        "id": "97540df1f3289fe0",
+        "name": "activesupport",
+        "version": "8.0.4",
+        "type": "gem",
+        "language": "ruby",
+        "licenses": [],
+        "cpes": [
+          "cpe:2.3:a:activesupport_project:activesupport:8.0.4:*:*:*:*:ruby:*:*"
+        ],
+        "purl": "pkg:gem/activesupport@8.0.4",
+        "upstreams": []
+      }
+    },
+    {
+      "vulnerability": {
+        "id": "CVE-2099-0001",
+        "namespace": "nvd:cpe",
+        "severity": "High",
+        "urls": [
+          "https://github.com/ruby/json/security/advisories/GHSA-3m6g-2423-7cp3",
+          "https://nvd.nist.gov/vuln/detail/CVE-2026-33210"
+        ],
+        "description": "Ruby JSON has a format string injection vulnerability",
+        "fix": {
+          "versions": [
+            "2.19.2"
+          ],
+          "state": "fixed",
+          "available": [
+            {
+              "version": "2.19.2",
+              "date": "2026-03-19",
+              "kind": "first-observed"
+            }
+          ]
+        }
+      },
+      "relatedVulnerabilities": [
+        {
+          "id": "CVE-2099-0001",
+          "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2099-0001",
+          "namespace": "nvd:cpe",
+          "severity": "High",
+          "urls": []
+        },
+        {
+          "id": "GHSA-cpe0-0000-0002",
+          "dataSource": "x",
+          "namespace": "github:language:ruby",
+          "severity": "High",
+          "urls": []
+        }
+      ],
+      "matchDetails": [
+        {
+          "type": "cpe-match",
+          "matcher": "ruby-gem-matcher",
+          "searchedBy": {
+            "namespace": "nvd:cpe"
+          },
+          "found": {
+            "vulnerabilityID": "CVE-2099-0001"
+          }
+        }
+      ],
+      "artifact": {
+        "id": "7a0975625f175c6d",
+        "name": "json",
+        "version": "2.18.0",
+        "type": "gem",
+        "language": "ruby",
+        "licenses": [],
+        "cpes": [
+          "cpe:2.3:a:json_project:json:2.18.0:*:*:*:*:ruby:*:*"
+        ],
+        "purl": "pkg:gem/json@2.18.0",
+        "upstreams": []
+      }
+    }
+  ],
+  "source": {
+    "type": "directory",
+    "target": "/src"
+  },
+  "distro": {
+    "name": "",
+    "version": "",
+    "idLike": null
+  },
+  "descriptor": {
+    "name": "grype",
+    "version": "0.122.1",
+    "db": {
+      "status": {
+        "schemaVersion": "v6.1.10",
+        "built": "2026-11-23T06:28:32Z",
+        "path": "/.cache/grype/db/6/vulnerability.db",
+        "valid": true
+      }
+    },
+    "timestamp": "2026-11-23T09:32:40.681326683Z"
+  }
+}
