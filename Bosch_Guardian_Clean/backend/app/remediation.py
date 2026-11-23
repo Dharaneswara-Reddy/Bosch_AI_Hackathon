@@ -1,9 +1,12 @@
 """Fix workflow API: list proposed fixes, start one, then approve or reject it."""
 
-from typing import Literal
+import threading
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Final, Literal
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
-from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.sqlite import SqliteSaver
 from pydantic import BaseModel, Field
 
 from guardian.models import RemediationProposal
@@ -23,15 +26,19 @@ from guardian.remediate.workflow import (
     Graph,
     build_fix_graph,
     is_waiting,
+    open_checkpointer,
     resume_fix,
     start_fix,
 )
+from guardian.report.render import render
 
 from . import pipeline
 from .schemas import ScanRecord
 
 router = APIRouter(prefix="/scan/{scan_id}/fixes", tags=["fixes"])
-CHECKPOINTER = MemorySaver()
+CHECKPOINT_FILE: Final = "checkpoints.sqlite"
+_CHECKPOINTERS: Final[dict[Path, SqliteSaver]] = {}
+_CHECKPOINTERS_LOCK: Final = threading.Lock()
 
 
 class DecisionRequest(Decision):
@@ -55,14 +62,29 @@ def fix_deps() -> FixDeps:
 def _finished(scan_id: str) -> ScanRecord:
     record = pipeline.SCANS.get(scan_id)
     if record is None:
-        raise HTTPException(404, "Scan not found; scans are kept in memory and reset on restart")
+        raise HTTPException(404, "Scan not found")
     if record.status == "running" or not (record.work_dir / "out" / "run.json").is_file():
         raise HTTPException(409, record.error or "Scan has no result yet; wait for it to finish")
     return record
 
 
+def _checkpointer(record: ScanRecord) -> SqliteSaver:
+    path = record.work_dir.parent / CHECKPOINT_FILE
+    with _CHECKPOINTERS_LOCK:
+        if path not in _CHECKPOINTERS:
+            _CHECKPOINTERS[path] = open_checkpointer(path)
+        return _CHECKPOINTERS[path]
+
+
+def close_checkpointers() -> None:
+    with _CHECKPOINTERS_LOCK:
+        for saver in _CHECKPOINTERS.values():
+            saver.conn.close()
+        _CHECKPOINTERS.clear()
+
+
 def _graph(record: ScanRecord) -> Graph:
-    return build_fix_graph(record.work_dir, CHECKPOINTER, fix_deps())
+    return build_fix_graph(record.work_dir, _checkpointer(record), fix_deps())
 
 
 def _proposal(record: ScanRecord, proposal_id: str) -> RemediationProposal:
@@ -70,6 +92,14 @@ def _proposal(record: ScanRecord, proposal_id: str) -> RemediationProposal:
         if proposal.proposal_id == proposal_id:
             return proposal
     raise HTTPException(404, f"No fix proposal '{proposal_id}' in this scan")
+
+
+def _resume_and_report(
+    graph: Graph, record: ScanRecord, proposal_id: str, decision: Decision
+) -> FixRun:
+    run = resume_fix(graph, record.scan_id, proposal_id, decision)
+    render(record.work_dir / "out")
+    return run
 
 
 @router.get("")
@@ -118,12 +148,12 @@ def decide(
     stored = load_fix(record.work_dir, proposal_id)
     if stored is None or not is_waiting(graph, scan_id, proposal_id):
         raise HTTPException(409, (
-            "No approval is pending for this fix. Start it first with POST .../start "
-            "(approvals do not survive a server restart)"))
-    decision = Decision(approved=body.approved, reviewer=body.reviewer, note=body.note)
+            "No approval is pending for this fix. Start it first with POST .../start"))
+    decision = Decision(approved=body.approved, reviewer=body.reviewer, note=body.note,
+                        decided_at=datetime.now(UTC))
     if not decision.approved:
-        return resume_fix(graph, scan_id, proposal_id, decision)
+        return _resume_and_report(graph, record, proposal_id, decision)
     running = stored.model_copy(update={"status": FixStatus.RUNNING, "decision": decision})
     save_fix(record.work_dir, running)
-    background.add_task(resume_fix, graph, scan_id, proposal_id, decision)
+    background.add_task(_resume_and_report, graph, record, proposal_id, decision)
     return running

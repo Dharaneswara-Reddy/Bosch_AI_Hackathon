@@ -24,6 +24,7 @@ from guardian.models import (
     Scan,
 )
 from guardian.relevance import rank
+from guardian.report.final import build_report, load_fixes
 
 Artifact = TypeVar("Artifact", bound=BaseModel)
 RISK_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3}
@@ -32,8 +33,8 @@ LIMITATIONS = (
     "Reachability is a static import search of the application's own source; it does not "
     "prove that a vulnerable function is called, and no hit is not proof of safety.",
     "Exploitation data (CISA KEV, EPSS) is shown only when the scanner output includes it.",
-    "Fix proposals are not applied or tested here; each needs human approval and a sandbox "
-    "build, test and rescan.",
+    "Fix proposals are applied only after human approval, in a sandbox copy; a fix without a "
+    "passing test run is verified by build and rescan only.",
 )
 
 
@@ -217,6 +218,10 @@ def render(run_dir: Path) -> None:
         "human_decisions": decisions,
         "has_sbom": (root / "sbom.cdx.json").is_file(),
     }
+    final = build_report(scan, graph, artifacts, ranked, decisions, load_fixes(root.parent))
+    (root / "report.json").write_text(final.model_dump_json(indent=2) + "\n", encoding="utf-8")
+    data["final"] = final
+    data["final_findings"] = {item.finding_id: item for item in final.findings}
     for name in ("report.html", "report.md"):
         text = environment.get_template(f"{name}.j2").render(**data)
         (root / name).write_text(text + "\n", encoding="utf-8")

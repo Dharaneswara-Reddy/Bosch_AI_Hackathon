@@ -80,7 +80,6 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
         return result
 
     monkeypatch.setattr(remediation, "fix_deps", lambda: FixDeps(command, scan, None))
-    monkeypatch.setattr(remediation, "CHECKPOINTER", remediation.MemorySaver())
     return TestClient(main.app)
 
 
@@ -136,3 +135,45 @@ def test_error_responses_are_actionable(client: TestClient) -> None:
     assert early.status_code == 409 and "start" in early.json()["detail"]
     invalid = client.post(f"{base}/rule-f1/decision", json={"approved": True, "reviewer": ""})
     assert invalid.status_code == 422
+
+
+def test_a_pending_approval_survives_a_backend_restart(client: TestClient) -> None:
+    base = f"/scan/{SCAN_ID}/fixes/rule-f1"
+    client.post(f"{base}/start")
+    remediation.close_checkpointers()
+
+    decided = client.post(f"{base}/decision", json={"approved": True, "reviewer": "ana"})
+
+    assert decided.status_code == 200
+    assert _fixes(client)["rule-f1"]["status"] == "verified"
+
+
+def _report_json(client: TestClient) -> dict[str, object]:
+    response = client.get(f"/scan/{SCAN_ID}/report.json")
+    assert response.status_code == 200
+    body: dict[str, object] = response.json()
+    return body
+
+
+def test_report_is_regenerated_when_an_approved_fix_finishes(client: TestClient) -> None:
+    base = f"/scan/{SCAN_ID}/fixes/rule-f1"
+    client.post(f"{base}/start")
+    client.post(f"{base}/decision", json={"approved": True, "reviewer": "ana", "note": "go"})
+    [validation] = _report_json(client)["validations"]  # type: ignore[misc]
+    assert validation["verdict"] == "fixed" and validation["reviewer"] == "ana"
+    assert validation["decided_at"] is not None
+    html = client.get(f"/scan/{SCAN_ID}/report").text
+    assert "Remediation &amp; validation" in html and "ana" in html
+
+
+def test_report_is_regenerated_when_a_fix_is_rejected(client: TestClient) -> None:
+    base = f"/scan/{SCAN_ID}/fixes/rule-f1"
+    client.post(f"{base}/start")
+    client.post(f"{base}/decision",
+                json={"approved": False, "reviewer": "ana", "note": "later"})
+    [validation] = _report_json(client)["validations"]  # type: ignore[misc]
+    assert (validation["verdict"], validation["note"]) == ("rejected", "later")
+
+
+def test_report_json_requires_a_finished_scan(client: TestClient) -> None:
+    assert client.get("/scan/nope/report.json").status_code == 404

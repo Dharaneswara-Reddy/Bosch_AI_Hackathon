@@ -24,6 +24,7 @@ from guardian.remediate.workflow import (
     FixDeps,
     build_fix_graph,
     is_waiting,
+    open_checkpointer,
     resume_fix,
     start_fix,
 )
@@ -170,3 +171,19 @@ def test_unsupported_ecosystem_is_reported_after_approval(harness: Harness) -> N
     assert done.status is FixStatus.FAILED
     assert done.apply is not None and done.apply.status == "unsupported"
     assert harness.scanned == []
+
+
+def test_a_pending_approval_survives_a_restart(tmp_path: Path) -> None:
+    db = tmp_path / "checkpoints.sqlite"
+    first = Harness(tmp_path / "scan")
+    first.graph = build_fix_graph(
+        first.work_dir, open_checkpointer(db),
+        FixDeps(runner=first.command, scan=first.scan, engine=None))
+    start_fix(first.graph, SCAN_ID, first.proposal())
+
+    restarted = build_fix_graph(
+        first.work_dir, open_checkpointer(db),
+        FixDeps(runner=first.command, scan=first.scan, engine=None))
+    assert is_waiting(restarted, SCAN_ID, "p1")
+    run = resume_fix(restarted, SCAN_ID, "p1", Decision(approved=True, reviewer="ana"))
+    assert run.status is FixStatus.VERIFIED, run.error

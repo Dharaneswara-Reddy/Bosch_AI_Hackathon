@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from html import escape
 from pathlib import Path
 
 from guardian.analysis import apply_relevance, apply_scope
@@ -24,7 +25,7 @@ SECTIONS = [
     "Vulnerabilities ranked by relevance",
     "Suspicious and malicious packages",
     "AI analysis",
-    "Fix proposals (human approval required)",
+    "Remediation & validation",
     "Agent trace",
     "Coverage",
     "Remaining unknowns and limitations",
@@ -73,7 +74,8 @@ def test_report_sections_follow_the_required_order(tmp_path: Path) -> None:
     out = _write_run(tmp_path)
     for name, heading in (("report.html", "<h2>{}</h2>"), ("report.md", "## {}\n")):
         text = (out / name).read_text()
-        positions = [text.index(heading.format(section)) for section in SECTIONS]
+        titles = [escape(s, quote=False) if name.endswith("html") else s for s in SECTIONS]
+        positions = [text.index(heading.format(title)) for title in titles]
         assert positions == sorted(positions), name
 
 

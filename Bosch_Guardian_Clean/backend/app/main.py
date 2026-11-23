@@ -2,6 +2,8 @@
 
 import os
 import tempfile
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException
@@ -17,7 +19,15 @@ from . import pipeline, remediation, review
 from .schemas import ScanRecord, ScanRequest, ScanResult, ScanStarted
 
 pipeline.load_root_env()
-app = FastAPI(title="Bosch Guardian API", version="0.3.0")
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    pipeline.load_records(scan_base())
+    yield
+
+
+app = FastAPI(title="Bosch Guardian API", version="0.3.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -43,7 +53,7 @@ def scan_base() -> Path:
 def _record(scan_id: str) -> ScanRecord:
     record = pipeline.SCANS.get(scan_id)
     if record is None:
-        raise HTTPException(404, "Scan not found; scans are kept in memory and reset on restart")
+        raise HTTPException(404, "Scan not found")
     return record
 
 
@@ -132,6 +142,11 @@ def scan_sbom(scan_id: str) -> FileResponse:
 @app.get("/scan/{scan_id}/report")
 def scan_report(scan_id: str) -> FileResponse:
     return FileResponse(_artifact(scan_id, "report.html"), media_type="text/html")
+
+
+@app.get("/scan/{scan_id}/report.json")
+def scan_report_json(scan_id: str) -> FileResponse:
+    return FileResponse(_artifact(scan_id, "report.json"), media_type="application/json")
 
 
 app.include_router(review.build_router(_finished))

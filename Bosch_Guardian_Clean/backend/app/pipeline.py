@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import logging
 import os
 import shutil
 from datetime import UTC, datetime
@@ -27,6 +28,8 @@ from guardian.prepare import generate_npm_lockfiles
 
 from .schemas import FetchSummary, ScanRecord, ScanResult
 
+logger = logging.getLogger(__name__)
+RECORD_FILE: Final = "record.json"
 SCANS: Final[dict[str, ScanRecord]] = {}
 REPO_ROOT: Final = Path(__file__).resolve().parents[3]
 FAKE_CLAIM: Final = REPO_ROOT / "tests" / "fixtures" / "fake_cve_claim.json"
@@ -57,6 +60,7 @@ def create_record(url: str, ref: str, base: Path, baseline_ref: str = "") -> Sca
         created_at=datetime.now(UTC), work_dir=base / scan_id,
     )
     SCANS[scan_id] = record
+    persist(record)
     return record
 
 
@@ -65,6 +69,7 @@ def create_demo_record(base: Path) -> ScanRecord:
     record = ScanRecord(scan_id=scan_id, repository_url=DEMO_LABEL, ref="local", demo=True,
                         created_at=datetime.now(UTC), work_dir=base / scan_id)
     SCANS[scan_id] = record
+    persist(record)
     return record
 
 
@@ -83,34 +88,60 @@ def prepare_demo(repo_dir: Path) -> FetchResult:
     return result
 
 
-def _fail(record: ScanRecord, message: str) -> None:
+def persist(record: ScanRecord) -> None:
+    record.work_dir.mkdir(parents=True, exist_ok=True)
+    temp = record.work_dir / f"{RECORD_FILE}.tmp"
+    temp.write_text(record.model_dump_json(indent=2), encoding="utf-8")
+    os.replace(temp, record.work_dir / RECORD_FILE)
+
+
+def set_stage(record: ScanRecord, stage: str) -> None:
+    record.stage = stage
+    persist(record)
+
+
+def load_records(base: Path) -> None:
+    """Reload persisted scans; one still marked running died with the previous server."""
+    for path in sorted(base.glob(f"*/{RECORD_FILE}")):
+        try:
+            record = ScanRecord.model_validate(
+                {**json.loads(path.read_bytes()), "work_dir": path.parent})
+        except ValueError:
+            logger.warning("Skipping unreadable scan record %s", path)
+            continue
+        if record.status == "running":
+            fail(record, "interrupted by server restart")
+        SCANS[record.scan_id] = record
+
+
+def fail(record: ScanRecord, message: str) -> None:
     record.status = "failed"
     record.error = message
-    record.stage = "done"
+    set_stage(record, "done")
 
 
 def _apply_result(record: ScanRecord, result: RunResult) -> None:
     record.status = result.scan.status.value  # type: ignore[assignment]
     record.llm_status = result.scan.llm_status.value
     record.errors = {**record.errors, **result.scan.errors}
-    record.stage = "done"
+    set_stage(record, "done")
 
 
 def _fetch_and_prepare(record: ScanRecord, repo_dir: Path, token: str | None) -> bool:
-    record.stage = "fetching"
+    set_stage(record, "fetching")
     fetched = fetch_repo_files(record.repository_url, record.ref, repo_dir, token)
     record.commit_sha, record.ref = fetched.commit_sha, fetched.ref
-    record.stage = "preparing"
+    set_stage(record, "preparing")
     prepared = generate_npm_lockfiles(fetched)
     record.errors.update(prepared.errors)
     if not prepared.files:
-        _fail(record, "No dependency manifests or lockfiles found in the repository")
+        fail(record, "No dependency manifests or lockfiles found in the repository")
         return False
     return True
 
 
 def _scan_baseline(record: ScanRecord, token: str | None) -> tuple[Path, str] | None:
-    record.stage = "baseline"
+    set_stage(record, "baseline")
     base_dir = record.work_dir / "baseline"
     try:
         fetched = fetch_repo_files(record.repository_url, record.baseline_ref,
@@ -152,12 +183,12 @@ def run_pipeline(record: ScanRecord, token: str | None, inject_fake_claim: bool 
     out_dir = record.work_dir / "out"
     try:
         if record.demo:
-            record.stage = "preparing"
+            set_stage(record, "preparing")
             record.commit_sha = prepare_demo(repo_dir).commit_sha
         elif not _fetch_and_prepare(record, repo_dir, token):
             return
         baseline = _scan_baseline(record, token) if record.baseline_ref else None
-        record.stage = "scanning"
+        set_stage(record, "scanning")
         inject = FAKE_CLAIM if inject_fake_claim else None
         result = runner.scan(repo_dir, out_dir, baseline=baseline[0] if baseline else None,
                              use_llm=ai_enabled(), inject_claim=inject)
@@ -165,9 +196,9 @@ def run_pipeline(record: ScanRecord, token: str | None, inject_fake_claim: bool 
             _record_changes(record, *baseline)
         _apply_result(record, result)
     except FetchError as error:
-        _fail(record, str(error))
+        fail(record, str(error))
     except Exception as error:  # noqa: BLE001 - worker boundary: report, never lose the failure
-        _fail(record, f"{type(error).__name__}: {error}")
+        fail(record, f"{type(error).__name__}: {error}")
 
 
 def _fetch_summary(record: ScanRecord) -> FetchSummary:

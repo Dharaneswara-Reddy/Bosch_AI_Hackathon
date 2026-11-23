@@ -291,6 +291,7 @@ export function Results({scanId, status, result, graph, onDecided = () => {}}) {
       <p>{status.repository_url} <span className="separator">/</span> <code>{result.fetch.commit_sha.slice(0, 10)}</code></p></div>
       <div className="actions">
         <a className="outline" href={`${API}/scan/${scanId}/report`} target="_blank" rel="noreferrer"><FileText size={16}/> Open full report</a>
+        <a className="outline" href={`${API}/scan/${scanId}/report.json`} download="report.json"><Download size={16}/> Download report.json</a>
         <a className="outline" href={`${API}/scan/${scanId}/sbom`} download="sbom.cdx.json"><Download size={16}/> Download SBOM</a>
       </div></div>
     <div className="summary-grid card"><div><span>Scan status</span><strong>{result.scan.status}</strong></div>
