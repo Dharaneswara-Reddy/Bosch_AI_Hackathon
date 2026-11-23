@@ -208,6 +208,7 @@ def render(run_dir: Path) -> None:
         "inferences": [item for item in analysis if item.validated and item.kind == "inference"],
         "rejected": [item for item in analysis if not item.validated],
         "fixes": [item for item in artifacts.claims if item.step == FIX_STEP],
+        "risk_adjustments": artifacts.risk_adjustments,
         "trace": artifacts.agent_trace,
         "unknowns": _unknowns(scan, ranked),
         "has_sbom": (root / "sbom.cdx.json").is_file(),

@@ -59,9 +59,15 @@ function ConfidenceCell({finding}) {
   </td>;
 }
 
+function AdjustedBadge({finding}) {
+  return finding.ai_adjusted ? <><br/><Badge tone="amber">AI adjusted</Badge></> : null;
+}
+
 function RiskReasons({finding}) {
   if (!finding.risk_reasons?.length && !finding.review_required) return null;
   return <div className="risk-reasons">
+    {finding.ai_adjusted && <p className="signals-summary">
+      <strong>AI adjusted:</strong> {finding.engine_risk_level} → {finding.risk_level}. {finding.ai_adjustment_reason}</p>}
     {finding.ssvc_decision && <p className="signals-summary">
       <strong>{DECISION_LABEL[finding.ssvc_decision]}</strong>
       {finding.risk_score != null && ` · score ${finding.risk_score}/100`}
@@ -100,7 +106,7 @@ function FindingsTable({findings, evidence, nodes, selectedId, onSelect, onShowP
     {rankFindings(findings).map(f => <React.Fragment key={f.finding_id}>
       <tr className={'clickable' + (selectedId === f.finding_id ? ' selected-row' : '')} onClick={() => onSelect(selectedId === f.finding_id ? null : f.finding_id)}>
         {assessed && <td><RelevanceBadge finding={f}/></td>}
-        <td className="nowrap"><Badge tone={RISK_TONE[f.risk_level]}>{f.risk_level}</Badge><br/><small>{f.risk_rule_id}{f.risk_score != null && ` · ${f.risk_score}`}</small></td>
+        <td className="nowrap"><Badge tone={RISK_TONE[f.risk_level]}>{f.risk_level}</Badge><AdjustedBadge finding={f}/><br/><small>{f.risk_rule_id}{f.risk_score != null && ` · ${f.risk_score}`}</small></td>
         <td><strong>{f.advisory_id}</strong><br/><EvidenceLink finding={f} evidence={evidence}/></td>
         <td><code>{componentLabel(f.component_id, nodes) === f.component_id ? f.purl : componentLabel(f.component_id, nodes)}</code></td>
         <td>{f.relevance?.introduced_by || 'unknown'}</td>
@@ -155,13 +161,25 @@ function AgentTraceTable({trace}) {
       <td className="source">{t.error || ''}</td></tr>)}</tbody></table></div></div>;
 }
 
-function AIReview({claims, llmStatus, trace}) {
-  if (!claims.length && !trace.length) {
+function AdjustmentsTable({adjustments, agreement}) {
+  if (!adjustments.length) return null;
+  return <div className="ai-group"><h3>Risk adjustments</h3><div className="table-scroll"><table><thead><tr>
+    <th>FINDING</th><th>CHANGE</th><th>STATUS</th><th>CRITIC</th><th>REASON</th></tr></thead><tbody>
+    {adjustments.map(a => <tr key={a.finding_id + a.to_level + a.status}>
+      <td><code>{a.finding_id}</code></td><td>{a.from_level} → {a.to_level}</td>
+      <td><Badge tone={a.status === 'accepted' ? 'green' : 'red'}>{a.status}</Badge></td>
+      <td>{a.finding_id in agreement ? (agreement[a.finding_id] ? 'agrees' : 'disagrees') : 'not reviewed'}</td>
+      <td className="source">{a.status === 'rejected' ? a.rejected_reason : a.reason}</td></tr>)}
+    </tbody></table></div></div>;
+}
+
+function AIReview({claims, llmStatus, trace, adjustments, agreement}) {
+  if (!claims.length && !trace.length && !adjustments.length) {
     return <div className="empty-state"><strong>No AI output for this scan</strong>
       <p>LLM status: {llmStatus}. Set GUARDIAN_LLM_PROVIDER and GUARDIAN_LLM_API_KEY in .env, or tick the
         hallucination test to see the validator reject a fabricated CVE without a key.</p></div>;
   }
-  return <><AgentTraceTable trace={trace}/>{AI_GROUPS.map(([title, steps]) => {
+  return <><AgentTraceTable trace={trace}/><AdjustmentsTable adjustments={adjustments} agreement={agreement}/>{AI_GROUPS.map(([title, steps]) => {
     const rows = claims.filter(c => steps.includes(c.step));
     if (!rows.length) return null;
     return <div className="ai-group" key={title}><h3>{title}</h3><div className="table-scroll"><table><thead><tr>
@@ -283,7 +301,8 @@ export function Results({scanId, status, result, graph}) {
         {tab === 'findings' && <FindingsTable findings={vulns} evidence={evidence} nodes={nodes}
           selectedId={selectedId} onSelect={setSelectedId} onShowPath={showPath}/>}
         {tab === 'anomalies' && <AnomalyTable anomalies={anomalies} evidence={evidence}/>}
-        {tab === 'ai' && <AIReview claims={claims} llmStatus={result.scan.llm_status} trace={result.agent_trace || []}/>}
+        {tab === 'ai' && <AIReview claims={claims} llmStatus={result.scan.llm_status} trace={result.agent_trace || []}
+          adjustments={result.risk_adjustments || []} agreement={result.agreement || {}}/>}
         {tab === 'coverage' && <CoverageTable coverage={result.coverage}/>}
         {tab === 'graph' && (graph ? <GraphView graph={graph} nodes={nodes} vulnerable={vulnerable} path={path} onClearPath={() => setPath([])}/> : <div className="empty-state"><strong>No graph produced</strong></div>)}
       </div></section>

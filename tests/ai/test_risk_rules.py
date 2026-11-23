@@ -4,12 +4,12 @@ import pytest
 
 from guardian.ai.context import ReviewContext
 from guardian.ai.risk_rules import check_adjustment
-from guardian.ai.state import RiskAdjustment
 from guardian.models import (
     Finding,
     FindingKind,
     Relevance,
     RelevanceSignal,
+    RiskAdjustment,
     RiskLevel,
 )
 from tests.ai.factories import make_context

@@ -74,3 +74,45 @@ def test_anomalies_have_no_score_and_review_only_when_act() -> None:
     assert result.confidence_score is None and result.review_required is False
     act = anomaly.model_copy(update={"ssvc_decision": SsvcDecision.ACT})
     assert apply_confidence(act, POLICY).review_required is True
+
+
+def reviewed(**extra: object) -> Finding:
+    return vuln(**{**FULL, **extra})
+
+
+def test_agreement_is_the_sixth_factor_for_ai_reviewed_findings() -> None:
+    finding = reviewed(confirmed_by=["grype"])
+    assert apply_confidence(finding, POLICY, {"x": True}).confidence_score == round(0.85 / 1.0, 2)
+    assert apply_confidence(finding, POLICY, {"x": False}).confidence_score == round(0.7 / 1.0, 2)
+
+
+def test_findings_the_ai_did_not_review_keep_five_factor_scores() -> None:
+    finding = reviewed(confirmed_by=["grype"])
+    result = apply_confidence(finding, POLICY, {"other": True})
+    assert result.confidence_score == round(0.7 / 0.85, 2)
+
+
+def adjusted(before: str, after: str) -> Finding:
+    return reviewed(ai_adjusted=True, engine_risk_level=before, risk_level=after)
+
+
+def test_ai_move_into_critical_requires_review() -> None:
+    result = apply_confidence(adjusted("high", "critical"), POLICY, {"x": True})
+    assert result.review_required is True
+    assert "AI risk analyst moved the level into critical (from high)" in result.review_reasons
+
+
+def test_ai_move_out_of_critical_requires_review() -> None:
+    result = apply_confidence(adjusted("critical", "high"), POLICY, {"x": True})
+    assert "AI risk analyst moved the level out of critical (to high)" in result.review_reasons
+
+
+def test_ai_move_between_other_levels_does_not_require_review() -> None:
+    result = apply_confidence(adjusted("medium", "high"), POLICY, {"x": True})
+    assert result.review_required is False
+
+
+def test_critic_disagreement_on_an_adjusted_finding_requires_review() -> None:
+    result = apply_confidence(adjusted("medium", "high"), POLICY, {"x": False})
+    assert result.review_required is True
+    assert "analyst and critic disagree on the risk adjustment" in result.review_reasons

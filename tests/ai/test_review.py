@@ -33,7 +33,8 @@ def test_fixture_claims_are_rejected_with_reasons_and_llm_off_is_unavailable() -
     injected = load_injected(FIXTURES / "fake_cve_claim.json", result)
     assert [c.step for c in injected] == ["injected", "injected"]
     assert injected[0].evidence_ids == ["ev-grype-0001"]
-    claims, status, trace = run_review(result, Settings(), injected)
+    review = run_review(result, Settings(), injected)
+    claims, status, trace = review.claims, review.llm_status, review.trace
     assert [t.agent for t in trace][:2] == ["triage", "relevance"]
     assert status == LlmStatus.UNAVAILABLE
     assert [c.validated for c in claims] == [False, False]
@@ -66,7 +67,7 @@ def test_single_claim_object_is_accepted(tmp_path: Path) -> None:
             }
         )
     )
-    claims, _, _ = run_review(_result(), Settings(), load_injected(path, _result()))
+    claims = run_review(_result(), Settings(), load_injected(path, _result())).claims
     assert [c.validated for c in claims] == [True]
 
 

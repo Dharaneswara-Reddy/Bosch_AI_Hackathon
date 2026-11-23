@@ -599,6 +599,41 @@
           },
           "title": "Review Reasons",
           "type": "array"
+        },
+        "engine_risk_level": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RiskLevel"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "ai_adjusted": {
+          "default": false,
+          "title": "Ai Adjusted",
+          "type": "boolean"
+        },
+        "ai_adjustment_reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ai Adjustment Reason"
+        },
+        "ai_adjustment_evidence_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Ai Adjustment Evidence Ids",
+          "type": "array"
         }
       },
       "required": [
@@ -733,6 +768,88 @@
       "title": "RelevanceVerdict",
       "type": "string"
     },
+    "RiskAdjustment": {
+      "additionalProperties": false,
+      "description": "The risk analyst's proposed one-level change, kept with its verdict and never merged.",
+      "properties": {
+        "finding_id": {
+          "title": "Finding Id",
+          "type": "string"
+        },
+        "from_level": {
+          "enum": [
+            "critical",
+            "high",
+            "medium",
+            "low"
+          ],
+          "title": "From Level",
+          "type": "string"
+        },
+        "to_level": {
+          "enum": [
+            "critical",
+            "high",
+            "medium",
+            "low"
+          ],
+          "title": "To Level",
+          "type": "string"
+        },
+        "direction": {
+          "enum": [
+            "raise",
+            "lower"
+          ],
+          "title": "Direction",
+          "type": "string"
+        },
+        "reason": {
+          "maxLength": 300,
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string"
+        },
+        "evidence_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 20,
+          "title": "Evidence Ids",
+          "type": "array"
+        },
+        "status": {
+          "default": "accepted",
+          "enum": [
+            "accepted",
+            "rejected"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "rejected_reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rejected Reason"
+        }
+      },
+      "required": [
+        "finding_id",
+        "from_level",
+        "to_level",
+        "direction",
+        "reason"
+      ],
+      "title": "RiskAdjustment",
+      "type": "object"
+    },
     "RiskLevel": {
       "enum": [
         "critical",
@@ -791,6 +908,20 @@
       },
       "title": "Agent Trace",
       "type": "array"
+    },
+    "risk_adjustments": {
+      "items": {
+        "$ref": "#/$defs/RiskAdjustment"
+      },
+      "title": "Risk Adjustments",
+      "type": "array"
+    },
+    "agreement": {
+      "additionalProperties": {
+        "type": "boolean"
+      },
+      "title": "Agreement",
+      "type": "object"
     }
   },
   "title": "FindingsArtifact",

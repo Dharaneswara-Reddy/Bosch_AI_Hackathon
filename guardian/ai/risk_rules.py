@@ -10,9 +10,8 @@ from __future__ import annotations
 from collections.abc import Collection
 
 from guardian.ai.context import RISK_ORDER, ReviewContext, as_text
-from guardian.ai.state import RiskAdjustment
 from guardian.ai.validator import validate
-from guardian.models import AgentClaim, ClaimKind, Finding, FindingKind
+from guardian.models import AgentClaim, ClaimKind, Finding, FindingKind, RiskAdjustment
 
 LEVELS = tuple(RISK_ORDER)
 HIGH = RISK_ORDER["high"]
@@ -23,7 +22,7 @@ def _signal(finding: Finding, name: str) -> str:
     return next((s.value for s in signals if s.name == name), "unknown")
 
 
-def _step_problems(raw: RiskAdjustment, finding: Finding) -> list[str]:
+def step_problems(raw: RiskAdjustment, finding: Finding) -> list[str]:
     current = as_text(finding.risk_level).lower()
     if current not in RISK_ORDER:
         return [f"finding has no current risk level ('{current}')"]
@@ -38,7 +37,7 @@ def _step_problems(raw: RiskAdjustment, finding: Finding) -> list[str]:
     return problems
 
 
-def _floor_problems(raw: RiskAdjustment, finding: Finding) -> list[str]:
+def floor_problems(raw: RiskAdjustment, finding: Finding) -> list[str]:
     if RISK_ORDER[raw.to_level] <= RISK_ORDER[raw.from_level]:
         return []
     if finding.kind == FindingKind.MALICIOUS:
@@ -85,8 +84,8 @@ def check_adjustment(
     finding = ctx.findings.get(raw.finding_id) if raw.finding_id in scope else None
     if finding is None:
         return _verdict(raw, [f"unknown finding {raw.finding_id}"])
-    problems = _step_problems(raw, finding)
-    problems += _floor_problems(raw, finding) if not problems else []
+    problems = step_problems(raw, finding)
+    problems += floor_problems(raw, finding) if not problems else []
     problems += _citation_problems(raw, ctx, finding)
     problems += _reason_problems(raw, ctx) if not problems else []
     return _verdict(raw, problems)

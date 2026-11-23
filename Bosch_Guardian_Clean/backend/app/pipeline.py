@@ -147,5 +147,6 @@ def load_result(record: ScanRecord) -> ScanResult:
     return ScanResult(
         scan=run.scan, findings=run.findings, evidence=run.evidence, coverage=run.coverage,
         counts_by_risk=counts, fetch=_fetch_summary(record), claims=run.claims,
-        agent_trace=run.agent_trace,
+        agent_trace=run.agent_trace, risk_adjustments=run.risk_adjustments,
+        agreement=run.agreement,
     )

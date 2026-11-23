@@ -22,15 +22,29 @@ from uuid import uuid4
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 
 from guardian.ai.review import load_injected, run_review
+from guardian.adjust import apply_adjustments
 from guardian.analysis import apply_relevance, apply_scope
 from guardian.confidence import apply_confidence
 from guardian.config import Settings
 from guardian.coverage import build_coverage
 from guardian.evidence import EvidenceStore, file_sha256
 from guardian.models import (
-    UNKNOWN, Component, CoverageArtifact, CoverageRow, CoverageStatus, Edge,
-    Evidence, Finding, FindingsArtifact, GraphArtifact, LlmStatus, Resolution, RunResult,
-    Scan, ScanStatus, Scope,
+    UNKNOWN,
+    Component,
+    CoverageArtifact,
+    CoverageRow,
+    CoverageStatus,
+    Edge,
+    Evidence,
+    Finding,
+    FindingsArtifact,
+    GraphArtifact,
+    LlmStatus,
+    Resolution,
+    RunResult,
+    Scan,
+    ScanStatus,
+    Scope,
 )
 from guardian.policy import DEFAULT_POLICY_PATH, load_policy
 from guardian.risk import assess
@@ -96,9 +110,10 @@ def _checkpoint(context: ScanContext) -> None:
     result.evidence = context.evidence.records()
     findings = FindingsArtifact(
         findings=result.findings, evidence=result.evidence, claims=result.claims,
-        agent_trace=result.agent_trace,
+        agent_trace=result.agent_trace, risk_adjustments=result.risk_adjustments,
+        agreement=result.agreement,
     )
-    for filename, data in zip(OUTPUT_FILES, (result.scan, result.graph, findings, result.coverage)):
+    for filename, data in zip(OUTPUT_FILES, (result.scan, result.graph, findings, result.coverage), strict=False):
         _write_model(context.out / filename, data)
 
 
@@ -167,7 +182,7 @@ def _normalize_graph(path: Path, sbom: Path, graph: object) -> GraphArtifact:
         )
         for component in bom.components if component.ref or component.purl != UNKNOWN
     ]
-    edge_rows = getattr(graph, "edges")(data=True)
+    edge_rows = graph.edges(data=True)
     edges = [
         Edge(parent_id=str(parent), child_id=str(child), edge_source=attrs.get("edge_source", "sbom"))
         for parent, child, attrs in edge_rows
@@ -285,7 +300,7 @@ def _detectors(context: ScanContext) -> None:
             name = getattr(detector, "name", type(detector).__name__)
 
             def apply(active: ScanContext, plugin: object = detector) -> None:
-                result = getattr(plugin, "run")(active)
+                result = plugin.run(active)
                 findings = TypeAdapter(list[Finding]).validate_python(result.findings)
                 rows = TypeAdapter(list[CoverageRow]).validate_python(result.coverage_rows)
                 active.result.findings.extend(findings)
@@ -323,10 +338,15 @@ def _relevance(context: ScanContext) -> None:
 def _review(context: ScanContext) -> None:
     result = context.result
     injected = load_injected(context.inject_claim, result) if context.inject_claim else []
-    claims, status, trace = run_review(result, context.settings, injected)
-    result.claims.extend(claims)
-    result.agent_trace = trace
-    result.scan.llm_status = status
+    review = run_review(result, context.settings, injected)
+    result.claims.extend(review.claims)
+    result.agent_trace = review.trace
+    result.scan.llm_status = review.llm_status
+    result.risk_adjustments = review.risk_adjustments
+    result.agreement = review.agreement
+    policy = load_policy(DEFAULT_POLICY_PATH)
+    adjusted = apply_adjustments(result.findings, review.risk_adjustments)
+    result.findings = [apply_confidence(f, policy, review.agreement) for f in adjusted]
 
 
 def _render(run_dir: Path) -> None:

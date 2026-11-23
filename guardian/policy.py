@@ -29,10 +29,16 @@ class ConfidenceWeights(_Strict):
     scanners_agree: float = Field(default=0.15, ge=0)
     exploit_data: float = Field(default=0.15, ge=0)
     reachability_known: float = Field(default=0.15, ge=0)
+    analyst_critic_agreement: float = Field(default=0.15, ge=0)
 
     @property
     def total(self) -> float:
-        return float(sum(self.model_dump().values()))
+        """Sum of the five code-computed factors, the denominator for unreviewed findings."""
+        return float(sum(self.model_dump(exclude={"analyst_critic_agreement"}).values()))
+
+    @property
+    def total_reviewed(self) -> float:
+        return self.total + self.analyst_critic_agreement
 
 
 class RiskPolicy(_Strict):

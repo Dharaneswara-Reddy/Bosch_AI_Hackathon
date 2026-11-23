@@ -53,6 +53,10 @@ Evidence unavailable.
 {% macro risk(finding) %}
 Risk **{{ finding.risk_level|md }}** · Rule {{ finding.risk_rule_id|md }} · Confidence {{ finding.confidence|md }} · State {{ finding.state|md }}.
 
+{% if finding.ai_adjusted %}
+**AI adjusted: {{ finding.engine_risk_level|md }} → {{ finding.risk_level|md }}** {{ finding.ai_adjustment_reason|md }}
+
+{% endif %}
 {% if finding.ssvc_decision %}
 Decision **{{ decisions[finding.ssvc_decision]|md }}**{% if finding.risk_score is not none %} · Score {{ finding.risk_score }}/100{% endif %}{% if finding.confidence_score is not none %} · Confidence {{ "%.2f"|format(finding.confidence_score) }}{% endif %}
 
@@ -118,6 +122,14 @@ No suspicious packages reported. See coverage for detector results.
 ## AI analysis
 
 AI status {{ scan.llm_status|md }}. Every claim below was checked by code against the evidence it cites.
+
+### Risk adjustments
+
+{% for item in risk_adjustments %}
+- `{{ item.finding_id|md }}` {{ item.from_level }} → {{ item.to_level }} ({{ item.status }}): {{ (item.rejected_reason if item.status == "rejected" else item.reason)|md }}
+{% else %}
+None recorded.
+{% endfor %}
 
 {% for title, claims in [("Accepted evidence claims", accepted), ("AI inferences", inferences), ("Rejected claims", rejected)] %}
 ### {{ title }}

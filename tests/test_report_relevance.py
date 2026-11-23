@@ -11,6 +11,8 @@ from guardian.models import (
     Finding,
     FindingKind,
     FindingsArtifact,
+    RiskAdjustment,
+    RiskLevel,
     SsvcDecision,
 )
 from guardian.report.render import render
@@ -111,3 +113,36 @@ def test_report_shows_decision_score_reasons_confidence_and_review_tag(tmp_path:
     markdown = (out / "report.md").read_text()
     assert "Decision **Act**" in markdown and "needs human review" in markdown
     assert "EPSS 0.33 \\(98th percentile\\)" in markdown
+
+
+def test_report_shows_ai_adjusted_tag_reason_and_adjustment_table(tmp_path: Path) -> None:
+    out = _write_run(tmp_path)
+    artifacts = FindingsArtifact.model_validate_json((out / "findings.json").read_text())
+    first = artifacts.findings[0]
+    reason = "The advisory only applies when the legacy parser is enabled."
+    artifacts.findings[0] = first.model_copy(update={
+        "risk_level": RiskLevel.HIGH, "engine_risk_level": RiskLevel.MEDIUM, "ai_adjusted": True,
+        "ai_adjustment_reason": reason,
+    })
+    artifacts.risk_adjustments = [
+        RiskAdjustment(
+            finding_id=first.finding_id, from_level="medium", to_level="high", direction="raise",
+            reason=reason, evidence_ids=first.evidence_ids, status="accepted",
+        ),
+        RiskAdjustment(
+            finding_id="f-other", from_level="low", to_level="critical", direction="raise",
+            reason="Too big a jump.", status="rejected",
+            rejected_reason="to_level must be exactly one level from the current level",
+        ),
+    ]
+    (out / "findings.json").write_text(artifacts.model_dump_json())
+    render(out)
+    html = (out / "report.html").read_text()
+    assert "AI adjusted: medium → high" in html
+    assert html.count(reason) >= 2
+    assert "<h3>Risk adjustments</h3>" in html
+    assert "to_level must be exactly one level from the current level" in html
+    markdown = (out / "report.md").read_text()
+    assert "AI adjusted: medium → high" in markdown
+    assert "### Risk adjustments" in markdown
+    assert "low → critical" in markdown and "rejected" in markdown

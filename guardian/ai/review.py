@@ -9,7 +9,7 @@ from typing import Any
 
 from guardian.ai.agents import PACK_BATCH
 from guardian.ai.context import RISK_ORDER, ReviewContext
-from guardian.ai.graph import load_injected_claims, run_ai_review
+from guardian.ai.graph import AIReviewResult, load_injected_claims, run_ai_review
 from guardian.ai.llm import (
     GROQ_DEFAULT_MODEL,
     MAX_TOKENS,
@@ -20,7 +20,7 @@ from guardian.ai.llm import (
     with_fallbacks,
 )
 from guardian.config import AI_CONCURRENCY, AI_MAX_GROUPS, AI_MIN_RISK, Settings
-from guardian.models import AgentClaim, AgentTrace, LlmStatus, RunResult
+from guardian.models import AgentClaim, RunResult
 
 
 def review_context_from_result(result: RunResult) -> ReviewContext:
@@ -76,13 +76,12 @@ def run_review(
     result: RunResult,
     settings: Settings,
     injected: list[AgentClaim],
-) -> tuple[list[AgentClaim], LlmStatus, list[AgentTrace]]:
+) -> AIReviewResult:
     env = {**read_env_file(Path(".env")), **os.environ}
-    review = run_ai_review(
+    return run_ai_review(
         review_context_from_result(result),
         review_client(settings, env),
         injected=injected,
         timeout=float(settings.timeout_s),
         **review_options(env),
     )
-    return review.claims, review.llm_status, review.trace

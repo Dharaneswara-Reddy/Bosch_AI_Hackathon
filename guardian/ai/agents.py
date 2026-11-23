@@ -48,10 +48,10 @@ from guardian.ai.schemas import (
     PlannerReply,
     RiskReply,
 )
-from guardian.ai.state import BranchInput, EvidencePack, GuardianState, RiskAdjustment
+from guardian.ai.state import BranchInput, EvidencePack, GuardianState
 from guardian.ai.triage import triage
 from guardian.ai.validator import validate
-from guardian.models import AgentClaim, AgentTrace, ClaimKind
+from guardian.models import AgentClaim, AgentTrace, ClaimKind, RiskAdjustment
 
 ANALYSTS = (VULN_ANALYST.name, CHANGE_ANALYST.name, ANALYST_REVISION.name)
 VULN_KINDS = {"vulnerability", "malicious"}

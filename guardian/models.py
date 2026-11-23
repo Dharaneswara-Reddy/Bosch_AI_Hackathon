@@ -7,8 +7,9 @@ import hashlib
 import json
 from datetime import datetime
 from enum import StrEnum
+from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 UNKNOWN = "UNKNOWN"
 
@@ -248,6 +249,10 @@ class Finding(BaseModel):
     confidence_score: float | None = Field(default=None, ge=0, le=1)
     review_required: bool = False
     review_reasons: list[str] = Field(default_factory=list)
+    engine_risk_level: RiskLevel | None = None
+    ai_adjusted: bool = False
+    ai_adjustment_reason: str | None = None
+    ai_adjustment_evidence_ids: list[str] = Field(default_factory=list)
 
 
 class AgentClaim(BaseModel):
@@ -287,11 +292,28 @@ class GraphArtifact(BaseModel):
     edges: list[Edge] = Field(default_factory=list)
 
 
+class RiskAdjustment(BaseModel):
+    """The risk analyst's proposed one-level change, kept with its verdict and never merged."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    finding_id: str
+    from_level: Literal["critical", "high", "medium", "low"]
+    to_level: Literal["critical", "high", "medium", "low"]
+    direction: Literal["raise", "lower"]
+    reason: str = Field(min_length=1, max_length=300)
+    evidence_ids: list[str] = Field(default_factory=list, max_length=20)
+    status: Literal["accepted", "rejected"] = "accepted"
+    rejected_reason: str | None = None
+
+
 class FindingsArtifact(BaseModel):
     findings: list[Finding] = Field(default_factory=list)
     evidence: list[Evidence] = Field(default_factory=list)
     claims: list[AgentClaim] = Field(default_factory=list)
     agent_trace: list[AgentTrace] = Field(default_factory=list)
+    risk_adjustments: list[RiskAdjustment] = Field(default_factory=list)
+    agreement: dict[str, bool] = Field(default_factory=dict)
 
 
 class EcosystemCoverage(BaseModel):

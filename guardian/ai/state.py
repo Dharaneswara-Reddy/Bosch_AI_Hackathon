@@ -9,11 +9,11 @@ from __future__ import annotations
 
 import operator
 from enum import StrEnum
-from typing import Annotated, Any, Literal, TypedDict
+from typing import Annotated, Any, TypedDict
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel
 
-from guardian.models import AgentClaim, AgentTrace, Relevance
+from guardian.models import AgentClaim, AgentTrace, Relevance, RiskAdjustment
 
 
 class FixAction(StrEnum):
@@ -84,21 +84,6 @@ class RemediationProposal(BaseModel):
     evidence_ids: list[str]
     requires_human_approval: bool = True
     validated: bool = False
-    rejected_reason: str | None = None
-
-
-class RiskAdjustment(BaseModel):
-    """The risk analyst's proposed one-level change, kept with its verdict and never merged."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    finding_id: str
-    from_level: Literal["critical", "high", "medium", "low"]
-    to_level: Literal["critical", "high", "medium", "low"]
-    direction: Literal["raise", "lower"]
-    reason: str = Field(min_length=1, max_length=300)
-    evidence_ids: list[str] = Field(default_factory=list, max_length=20)
-    status: Literal["accepted", "rejected"] = "accepted"
     rejected_reason: str | None = None
 
 

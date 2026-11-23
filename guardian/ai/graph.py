@@ -26,9 +26,9 @@ from guardian.ai.guardrails import find_injection_markers
 from guardian.ai.llm import LLMClient
 from guardian.ai.runtime import AgentRuntime
 from guardian.ai.schemas import LLMReply
-from guardian.ai.state import GuardianState, RemediationProposal, RiskAdjustment
+from guardian.ai.state import GuardianState, RemediationProposal
 from guardian.config import AI_CONCURRENCY, AI_MAX_GROUPS, AI_MIN_RISK
-from guardian.models import AgentClaim, AgentTrace, LlmStatus
+from guardian.models import AgentClaim, AgentTrace, LlmStatus, RiskAdjustment
 
 DEFAULT_TIMEOUT_S = 30.0
 TOP_FINDING_PLACEHOLDER = "@top-finding"

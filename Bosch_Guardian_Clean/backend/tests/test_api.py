@@ -156,6 +156,34 @@ def test_fake_claim_injection_and_claims_in_result(
     assert claims[0]["rejected_reason"].startswith("advisory CVE-2026-31337")
 
 
+def test_risk_adjustments_and_agreement_reach_the_result(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from guardian.models import RiskAdjustment
+
+    adjustment = RiskAdjustment(
+        finding_id="f1", from_level="medium", to_level="high", direction="raise",
+        reason="Needs the legacy parser.", evidence_ids=["e1"],
+    )
+
+    def scan(target: Path, out: Path, **kwargs: object) -> RunResult:
+        result = _fake_scan(target, out)
+        (out / "findings.json").write_text(json.dumps({
+            "findings": [], "evidence": [],
+            "risk_adjustments": [adjustment.model_dump(mode="json")], "agreement": {"f1": True},
+        }))
+        return result
+
+    monkeypatch.setenv("GUARDIAN_LLM_PROVIDER", "none")
+    monkeypatch.setattr(pipeline, "fetch_repo_files", _fake_fetch)
+    monkeypatch.setattr(pipeline.runner, "scan", scan)
+    scan_id = client.post("/scan", json={"url": "https://github.com/o/r"}).json()["scan_id"]
+    body = client.get(f"/scan/{scan_id}/result").json()
+    assert body["risk_adjustments"][0]["to_level"] == "high"
+    assert body["agreement"] == {"f1": True}
+
+
 def test_root_env_file_is_loaded_without_overriding(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

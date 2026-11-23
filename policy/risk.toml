@@ -16,10 +16,12 @@ open = 1.0
 limited = 0.85
 small = 0.6
 
-# Confidence factor weights; normalised over the factors the code can compute.
+# Confidence factor weights; normalised over the factors that apply to the finding.
 [confidence_weights]
 version_confirmed = 0.25
 path_resolved = 0.15
 scanners_agree = 0.15
 exploit_data = 0.15
 reachability_known = 0.15
+# Counted only for findings the AI reviewed.
+analyst_critic_agreement = 0.15

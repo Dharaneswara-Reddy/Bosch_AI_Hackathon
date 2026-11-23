@@ -12,7 +12,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from guardian.ai.state import FixAction, RiskAdjustment
+from guardian.ai.state import FixAction
+from guardian.models import RiskAdjustment
 
 MAX_CLAIMS_PER_STEP = 8
 MAX_CLAIM_CHARS = 600

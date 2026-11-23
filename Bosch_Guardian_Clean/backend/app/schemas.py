@@ -7,7 +7,15 @@ from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 
 from guardian.fetch import FetchedFile
-from guardian.models import AgentClaim, AgentTrace, CoverageArtifact, Evidence, Finding, Scan
+from guardian.models import (
+    AgentClaim,
+    AgentTrace,
+    CoverageArtifact,
+    Evidence,
+    Finding,
+    RiskAdjustment,
+    Scan,
+)
 
 Status = Literal["running", "complete", "partial", "failed"]
 
@@ -62,3 +70,5 @@ class ScanResult(BaseModel):
     fetch: FetchSummary
     claims: list[AgentClaim] = Field(default_factory=list)
     agent_trace: list[AgentTrace] = Field(default_factory=list)
+    risk_adjustments: list[RiskAdjustment] = Field(default_factory=list)
+    agreement: dict[str, bool] = Field(default_factory=dict)
