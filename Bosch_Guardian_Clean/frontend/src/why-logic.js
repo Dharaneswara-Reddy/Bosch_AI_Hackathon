@@ -52,6 +52,11 @@ function callsByProvider(trace) {
   return calls;
 }
 
+function plannerNote(trace) {
+  const error = trace.find(row => row.agent === 'remediation_planner')?.error || '';
+  return error.startsWith('AI planner unavailable') ? error.split('. ')[0] : null;
+}
+
 export function providerLine(trace) {
   const chain = trace.find(row => row.agent === 'llm_providers');
   const calls = callsByProvider(trace);
@@ -60,5 +65,5 @@ export function providerLine(trace) {
   const notes = (chain?.error || '').split('; ').filter(Boolean)
     .map(note => (answered.length && note.includes(' failed:') ? `${note} → fell back` : note));
   const head = answered.length ? `Answered by: ${answered.join(', ')}` : 'No AI provider answered';
-  return [head, ...notes].join(' · ');
+  return [head, ...notes, plannerNote(trace)].filter(Boolean).join(' · ');
 }
