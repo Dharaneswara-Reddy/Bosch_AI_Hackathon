@@ -1,6 +1,43 @@
 # Software Supply Chain Guardian
 
-Guardian inventories dependencies, combines scanner and detector evidence, and produces a static report. It assigns risk using fixed rules and displays the status of optional AI review.
+Guardian takes a repository from discovery to verified remediation: SBOM and dependency graph → known vulnerabilities and suspicious changes → explainable risk with a confidence score → AI explanations checked against evidence → human review → an approved fix that is built, tested and rescanned in a sandbox → an evidence-based report.
+
+![Guardian architecture](docs/architecture-v2.png)
+
+- [Responsible AI & Security note](docs/responsible-ai-security.md): where AI is used, how hallucinations are controlled, what needs human approval, how secrets are protected.
+- [Architecture v2 design](docs/designs/guardian-v2-architecture.md): the reasoning behind the risk engine, confidence score and agents.
+
+## Web UI quick start
+
+You need Python 3.11+, Node.js 20+, Docker or Podman (scanner images and the fix sandbox), and npm.
+
+```sh
+python3.11 -m venv .venv && source .venv/bin/activate
+pip install -e '.[dev]' -r Bosch_Guardian_Clean/backend/requirements.txt
+bash scripts/prefetch.sh                # scanner images and the Grype database
+cp .env.example .env                    # then fill in the keys you have (see below)
+
+cd Bosch_Guardian_Clean/backend && python -m uvicorn app.main:app --port 8000
+# second terminal
+cd Bosch_Guardian_Clean/frontend && npm install && npm run dev   # http://127.0.0.1:5173
+```
+
+| Setting in `.env` | Purpose |
+|---|---|
+| `GUARDIAN_LLM_PROVIDER` | `groq`, or `none` for a fully offline run (the risk engine and rule-based fixes still work) |
+| `GUARDIAN_LLM_API_KEY` | Key for the primary provider |
+| `GUARDIAN_LLM_FALLBACKS`, `GEMINI_API_KEY` | Fallback chain, e.g. `gemini`, used when the primary fails or is rate-limited |
+| `GITHUB_TOKEN` | Optional; raises the GitHub API limit from 60 requests per hour. Stays in the backend |
+| `GUARDIAN_SCAN_DIR` | Where scans, decisions and fix runs are stored |
+| `GUARDIAN_AI_MIN_RISK`, `GUARDIAN_LLM_CONCURRENCY` | Lowest risk level sent to the AI (default `medium`) and the number of parallel AI branches (default 4) |
+
+### Demo walkthrough (Day 2 flow)
+
+1. **Scan.** Click **Scan the built-in demo app** (local, no network), or paste a public GitHub URL. Fill in **Compare with** to see what changed since an older tag.
+2. **Prioritize.** The findings are ranked Critical → Low. Click one to see **Why this risk?**: exploitation, scope, attack vector, impact, the SSVC decision, the confidence score and any AI adjustment.
+3. **Review.** The **Review queue** tab lists the uncertain findings. Confirm, dismiss (records an accepted risk, so a note is required) or escalate each one.
+4. **Fix.** The **Fixes** tab shows each proposed fix with its expected risk reduction, rollback and compatibility risk. Click **Approve**: the LangGraph workflow resumes from its pause, applies the fix in a sandbox, builds, runs the tests in a no-network container, rescans and shows before vs. after.
+5. **Report.** **Open full report** (`report.html`) or download `report.json`. Both cover the original findings and evidence, the approved actions, the validation results, the remaining and accepted risks, and the audit trail.
 
 ## Setup
 
