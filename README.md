@@ -29,6 +29,7 @@ cd Bosch_Guardian_Clean/frontend && npm install && npm run dev   # http://127.0.
 | `GUARDIAN_LLM_FALLBACKS`, `GEMINI_API_KEY` | Fallback chain, e.g. `gemini`, used when the primary fails or is rate-limited |
 | `GITHUB_TOKEN` | Optional; raises the GitHub API limit from 60 requests per hour. Stays in the backend |
 | `GUARDIAN_SCAN_DIR` | Where scans, decisions and fix runs are stored |
+| `GUARDIAN_SANDBOX_DNS` | Optional DNS server (e.g. `1.1.1.1`) for the sandbox's package-install container. Set it when containers cannot resolve hosts, as on hosts that use systemd-resolved's `127.0.0.53` |
 | `GUARDIAN_AI_MIN_RISK`, `GUARDIAN_LLM_CONCURRENCY` | Lowest risk level sent to the AI (default `medium`) and the number of parallel AI branches (default 4) |
 
 ### Demo walkthrough (Day 2 flow)
