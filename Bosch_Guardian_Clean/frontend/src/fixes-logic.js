@@ -51,5 +51,8 @@ export function compareReduction(reduction, diff) {
   const actual = {};
   diff.fixed.forEach(ref => { actual[ref.risk_level] = (actual[ref.risk_level] || 0) + 1; });
   const sameCounts = LEVELS.every(l => (reduction.fixes[l] || 0) === (actual[l] || 0));
-  return {expected: levelText(reduction.fixes) || 'nothing', actual: levelText(actual) || 'nothing', matches: sameCounts};
+  const total = counts => LEVELS.reduce((sum, l) => sum + (counts[l] || 0), 0);
+  const label = sameCounts ? 'as expected'
+    : total(actual) > total(reduction.fixes) ? 'more than expected' : 'less than expected';
+  return {expected: levelText(reduction.fixes) || 'nothing', actual: levelText(actual) || 'nothing', matches: sameCounts, label};
 }

@@ -28,7 +28,7 @@ function ExpectedVsActual({expected, diff}) {
   const comparison = compareReduction(expected, diff);
   if (!comparison) return null;
   return <p className="body-text">Expected to fix: <strong>{comparison.expected}</strong> · Actually fixed: <strong>{comparison.actual}</strong>{' '}
-    <Badge tone={comparison.matches ? 'green' : 'amber'}>{comparison.matches ? 'as expected' : 'differs'}</Badge></p>;
+    <Badge tone={comparison.label === 'less than expected' ? 'amber' : 'green'}>{comparison.label}</Badge></p>;
 }
 
 function FixResult({run, expected}) {
