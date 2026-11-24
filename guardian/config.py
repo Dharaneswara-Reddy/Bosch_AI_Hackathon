@@ -26,7 +26,9 @@ class Settings(BaseModel):
     @model_validator(mode="after")
     def require_provider_key(self) -> "Settings":
         if self.provider != "none" and not self.api_key.get_secret_value().strip():
-            raise ValueError("Set GUARDIAN_LLM_API_KEY for the configured provider, or use --no-llm.")
+            raise ValueError(
+                "Set GUARDIAN_LLM_API_KEY for the configured provider, or use --no-llm."
+            )
         for name, image in self.tool_images.items():
             if IMAGE_DIGEST.fullmatch(image) is None:
                 raise ValueError(f"Configure a pinned digest for GUARDIAN_{name.upper()}_IMAGE.")

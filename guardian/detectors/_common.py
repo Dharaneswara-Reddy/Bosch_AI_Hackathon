@@ -63,7 +63,7 @@ def read_value(value: Any, key: str, default: Any = None) -> Any:
 
 def components_from(sbom: Any) -> list[Any]:
     components = read_value(sbom, "components", [])
-    return list(components) if isinstance(components, (list, tuple)) else []
+    return list(components) if isinstance(components, list | tuple) else []
 
 
 def ecosystem_of(component: Any) -> str:

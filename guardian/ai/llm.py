@@ -153,7 +153,7 @@ class OpenAICompatibleClient:
         except urllib.error.HTTPError as exc:
             raise _http_error(exc) from exc
         except urllib.error.URLError as exc:
-            if isinstance(exc.reason, (TimeoutError, socket.timeout)):
+            if isinstance(exc.reason, TimeoutError | socket.timeout):
                 raise LLMTimeout(f"No reply within {timeout:.0f}s.") from exc
             raise LLMError(f"Provider unreachable: {exc.reason}.") from exc
         except json.JSONDecodeError as exc:
@@ -220,9 +220,10 @@ def _retry_after(exc: Exception, attempt: int) -> float | None:
         return None
     headers = getattr(getattr(exc, "response", None), "headers", None) or {}
     try:
-        return max(0.0, float(headers.get("retry-after", "")))
+        wait = float(str(headers.get("retry-after", "")))
+        return max(0.0, wait)
     except ValueError:
-        return BACKOFF_BASE_S * 2**attempt
+        return BACKOFF_BASE_S * 2.0**attempt
 
 
 def _strict_format(schema: JsonObject) -> JsonObject:

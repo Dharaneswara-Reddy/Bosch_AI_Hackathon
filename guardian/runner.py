@@ -9,7 +9,7 @@ import re
 import shutil
 import subprocess
 import sys
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -17,12 +17,13 @@ from importlib import import_module
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import ModuleType
+from typing import Protocol, cast
 from uuid import uuid4
 
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 
-from guardian.ai.review import load_injected, run_review
 from guardian.adjust import apply_adjustments
+from guardian.ai.review import load_injected, run_review
 from guardian.analysis import apply_relevance, apply_scope
 from guardian.confidence import apply_confidence
 from guardian.config import Settings
@@ -35,6 +36,7 @@ from guardian.models import (
     CoverageRow,
     CoverageStatus,
     Edge,
+    EdgeSource,
     Evidence,
     Finding,
     FindingsArtifact,
@@ -57,6 +59,19 @@ LOCKFILES = {
 }
 OUTPUT_FILES = ("run.json", "graph.json", "findings.json", "coverage.json")
 IMAGE_REF = re.compile(r"[a-zA-Z0-9._:/-]+@sha256:[a-f0-9]{64}")
+
+
+class _EdgeGraph(Protocol):
+    def edges(self, data: bool) -> Iterable[tuple[object, object, Mapping[str, EdgeSource]]]: ...
+
+
+class _Detection(Protocol):
+    findings: object
+    coverage_rows: object
+
+
+class _Detector(Protocol):
+    def run(self, context: ScanContext) -> _Detection: ...
 
 
 @dataclass
@@ -114,7 +129,8 @@ def _checkpoint(context: ScanContext) -> None:
         agent_trace=result.agent_trace, risk_adjustments=result.risk_adjustments,
         agreement=result.agreement, proposals=result.proposals,
     )
-    for filename, data in zip(OUTPUT_FILES, (result.scan, result.graph, findings, result.coverage), strict=False):
+    artifacts = (result.scan, result.graph, findings, result.coverage)
+    for filename, data in zip(OUTPUT_FILES, artifacts, strict=False):
         _write_model(context.out / filename, data)
 
 
@@ -183,10 +199,12 @@ def _normalize_graph(path: Path, sbom: Path, graph: object) -> GraphArtifact:
         )
         for component in bom.components if component.ref or component.purl != UNKNOWN
     ]
-    edge_rows = graph.edges(data=True)
     edges = [
-        Edge(parent_id=str(parent), child_id=str(child), edge_source=attrs.get("edge_source", "sbom"))
-        for parent, child, attrs in edge_rows
+        Edge(
+            parent_id=str(parent), child_id=str(child),
+            edge_source=attrs.get("edge_source", EdgeSource.SBOM),
+        )
+        for parent, child, attrs in cast(_EdgeGraph, graph).edges(data=True)
     ]
     return GraphArtifact(nodes=nodes, edges=edges)
 
@@ -300,7 +318,7 @@ def _detectors(context: ScanContext) -> None:
         for detector in registry.get(key, []):
             name = getattr(detector, "name", type(detector).__name__)
 
-            def apply(active: ScanContext, plugin: object = detector) -> None:
+            def apply(active: ScanContext, plugin: _Detector = detector) -> None:
                 result = plugin.run(active)
                 findings = TypeAdapter(list[Finding]).validate_python(result.findings)
                 rows = TypeAdapter(list[CoverageRow]).validate_python(result.coverage_rows)
@@ -424,7 +442,8 @@ def _cache(context: ScanContext, clean_commit: bool) -> RunResult | None:
             return None
     except (OSError, ValidationError, UnicodeError):
         return None
-    previous.cached_age_minutes = max(0, (datetime.now(UTC) - previous.ended_at).total_seconds() / 60)
+    age = datetime.now(UTC) - previous.ended_at
+    previous.cached_age_minutes = max(0, age.total_seconds() / 60)
     _write_model(context.out / "run.json", previous)
     return RunResult(scan=previous, graph=graph, coverage=coverage, **artifacts.model_dump())
 
@@ -464,7 +483,10 @@ def _prepare(
     )
     result = RunResult(scan=record)
     claim_file = inject_claim.resolve(strict=True) if inject_claim else None
-    return ScanContext(local, out, baseline, settings, result, EvidenceStore(out), claim_file), clean
+    context = ScanContext(
+        local, out, baseline, settings, result, EvidenceStore(out), claim_file
+    )
+    return context, clean
 
 
 def scan(
@@ -492,7 +514,8 @@ def _output_lock(out: Path) -> Iterator[None]:
 
                 fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError as error:
-            raise RuntimeError(f"Another scan is writing to {out}, or it cannot be locked.") from error
+            message = f"Another scan is writing to {out}, or it cannot be locked."
+            raise RuntimeError(message) from error
         yield
 
 

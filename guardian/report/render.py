@@ -5,7 +5,7 @@ from collections import Counter
 from html import escape
 from itertools import islice
 from pathlib import Path
-from typing import TypeVar
+from typing import TypeVar, cast
 from urllib.parse import quote
 
 from jinja2 import Environment, FileSystemLoader
@@ -206,7 +206,7 @@ def render(run_dir: Path) -> None:
             for item in findings
             if item.kind in (FindingKind.ANOMALY, FindingKind.MALICIOUS)
         ],
-        "entries": _entry_paths([group["finding"] for group in groups], graph),
+        "entries": _entry_paths([cast(Finding, group["finding"]) for group in groups], graph),
         "evidence": _evidence_details(root, artifacts.evidence),
         "accepted": [item for item in analysis if item.validated and item.kind == "evidence"],
         "inferences": [item for item in analysis if item.validated and item.kind == "inference"],
