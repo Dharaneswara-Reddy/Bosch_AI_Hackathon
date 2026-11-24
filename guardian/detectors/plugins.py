@@ -27,7 +27,7 @@ from guardian.detectors._common import (
     json_bytes,
     sha256_bytes,
 )
-from guardian.models import UNKNOWN, CoverageRow, CoverageStatus, Finding, Scan
+from guardian.models import UNKNOWN, CoverageRow, CoverageStatus, Evidence, Finding, Scan
 
 
 def _read_json(path: Path) -> object:
@@ -130,7 +130,8 @@ def _baseline_lockfile(
 
 def _npm_lockfiles(root: Path) -> list[Path]:
     return sorted(
-        path for path in root.rglob("package-lock.json")
+        path
+        for path in root.rglob("package-lock.json")
         if path.is_file() and not ({".git", "node_modules", "artifacts"} & set(path.parts))
     )
 
@@ -140,63 +141,53 @@ def _run_unverified_source(context: DetectorContext) -> DetectionResult:
     return unverified_source.detect(root, _npm_lockfiles(root) if root is not None else [])
 
 
-def _run_install_script(context: DetectorContext) -> DetectionResult:
-    ecosystems = _ecosystems(context)
-    if context.target_path is None:
-        return install_script.detect(None, baseline_lockfile=None, ecosystems=ecosystems)
-
-    root = context.target_path
-    target_lockfiles = sorted(
-        path
-        for path in root.rglob("package-lock.json")
-        if path.is_file() and not ({".git", "node_modules", "artifacts"} & set(path.parts))
+def _absorb_lockfile(
+    combined: DetectionResult,
+    detector: str,
+    lockfile: Path,
+    relative: str,
+    partial: DetectionResult,
+) -> None:
+    lock_bytes = lockfile.read_bytes()
+    artifact_file = f"raw/detectors/{detector}/lockfiles/{relative}"
+    combined.artifacts[artifact_file] = lock_bytes
+    combined.evidence.extend(
+        record.model_copy(
+            update={"file": artifact_file, "sha256": sha256_bytes(lock_bytes)}, deep=True
+        )
+        for record in partial.evidence
     )
-    if not target_lockfiles:
-        no_lock_rows = []
-        for ecosystem in ecosystems:
-            status = (
-                CoverageStatus.NOT_APPLICABLE if ecosystem == "npm" else CoverageStatus.NOT_COVERED
-            )
-            reason = (
-                "No npm lockfile found"
-                if ecosystem == "npm"
-                else "Install scripts are checked for npm only"
-            )
-            no_lock_rows.extend(coverage_rows("install_script", [ecosystem], status, reason))
-        return DetectionResult(coverage=no_lock_rows)
+    combined.findings.extend(partial.findings)
+    combined.finding_details.update(partial.finding_details)
 
-    combined = DetectionResult()
-    for lockfile in target_lockfiles:
-        relative = lockfile.relative_to(root).as_posix()
-        baseline = _baseline_lockfile(context, root, relative)
-        partial = install_script.detect(lockfile, baseline_lockfile=baseline, ecosystems=["npm"])
-        lock_bytes = lockfile.read_bytes()
-        artifact_file = f"raw/detectors/install_script/lockfiles/{relative}"
-        combined.artifacts[artifact_file] = lock_bytes
-        for record in partial.evidence:
-            combined.evidence.append(
-                record.model_copy(
-                    update={"file": artifact_file, "sha256": sha256_bytes(lock_bytes)},
-                    deep=True,
-                )
-            )
-        combined.findings.extend(partial.findings)
-        combined.finding_details.update(partial.finding_details)
 
-    # The same package can occur in root and frontend lockfiles; keep one finding
-    # with evidence from each lockfile.
+def _no_install_lockfile(ecosystems: list[str]) -> DetectionResult:
+    rows = []
+    for ecosystem in ecosystems:
+        status = CoverageStatus.NOT_APPLICABLE if ecosystem == "npm" else CoverageStatus.NOT_COVERED
+        reason = (
+            "No npm lockfile found"
+            if ecosystem == "npm"
+            else "Install scripts are checked for npm only"
+        )
+        rows.extend(coverage_rows("install_script", [ecosystem], status, reason))
+    return DetectionResult(coverage=rows)
+
+
+def _merge_install_findings(findings: list[Finding]) -> list[Finding]:
     unique: dict[str, Finding] = {}
-    for finding in combined.findings:
+    for finding in findings:
         existing = unique.get(finding.finding_id)
         if existing is None:
             unique[finding.finding_id] = finding
         else:
             existing.evidence_ids = sorted(set(existing.evidence_ids + finding.evidence_ids))
-    combined.findings = list(unique.values())
+    return list(unique.values())
 
-    counts = {ecosystem: 0 for ecosystem in ecosystems}
-    counts["npm"] = len(target_lockfiles)
-    status = CoverageStatus.FINDING if combined.findings else CoverageStatus.PASS
+
+def _install_coverage(
+    ecosystems: list[str], status: CoverageStatus, counts: dict[str, int]
+) -> list[CoverageRow]:
     coverage: list[CoverageRow] = []
     for ecosystem in ecosystems:
         if ecosystem == "npm":
@@ -211,7 +202,37 @@ def _run_install_script(context: DetectorContext) -> DetectionResult:
                     counts,
                 )
             )
-    combined.coverage = coverage
+    return coverage
+
+
+def _run_install_script(context: DetectorContext) -> DetectionResult:
+    ecosystems = _ecosystems(context)
+    if context.target_path is None:
+        return install_script.detect(None, baseline_lockfile=None, ecosystems=ecosystems)
+
+    root = context.target_path
+    target_lockfiles = sorted(
+        path
+        for path in root.rglob("package-lock.json")
+        if path.is_file() and not ({".git", "node_modules", "artifacts"} & set(path.parts))
+    )
+    if not target_lockfiles:
+        return _no_install_lockfile(ecosystems)
+
+    combined = DetectionResult()
+    for lockfile in target_lockfiles:
+        relative = lockfile.relative_to(root).as_posix()
+        baseline = _baseline_lockfile(context, root, relative)
+        partial = install_script.detect(lockfile, baseline_lockfile=baseline, ecosystems=["npm"])
+        _absorb_lockfile(combined, "install_script", lockfile, relative, partial)
+
+    # The same package can occur in root and frontend lockfiles; keep one finding
+    # with evidence from each lockfile.
+    combined.findings = _merge_install_findings(combined.findings)
+    counts = {ecosystem: 0 for ecosystem in ecosystems}
+    counts["npm"] = len(target_lockfiles)
+    status = CoverageStatus.FINDING if combined.findings else CoverageStatus.PASS
+    combined.coverage = _install_coverage(ecosystems, status, counts)
     return combined
 
 
@@ -228,17 +249,7 @@ def _run_lockfile_integrity(context: DetectorContext) -> DetectionResult:
         partial = lockfile_integrity.detect(
             lockfile, baseline_lockfile=baseline, ecosystems=["npm"]
         )
-        lock_bytes = lockfile.read_bytes()
-        artifact_file = f"raw/detectors/lockfile_integrity/lockfiles/{relative}"
-        combined.artifacts[artifact_file] = lock_bytes
-        combined.evidence.extend(
-            record.model_copy(
-                update={"file": artifact_file, "sha256": sha256_bytes(lock_bytes)}, deep=True
-            )
-            for record in partial.evidence
-        )
-        combined.findings.extend(partial.findings)
-        combined.finding_details.update(partial.finding_details)
+        _absorb_lockfile(combined, "lockfile_integrity", lockfile, relative, partial)
     unique = {finding.finding_id: finding for finding in reversed(combined.findings)}
     combined.findings = list(unique.values())
     status = CoverageStatus.FINDING if combined.findings else CoverageStatus.PASS
@@ -258,11 +269,9 @@ def _run_lockfile_integrity(context: DetectorContext) -> DetectionResult:
     return combined
 
 
-def _materialize_result(
-    context: DetectorContext, name: str, result: DetectionResult
-) -> DetectionResult:
-    """Copy evidence into raw/, register it, then return the runner payload."""
-    artifacts = dict(result.artifacts)
+def _stage_evidence(
+    context: DetectorContext, name: str, result: DetectionResult, artifacts: dict[str, bytes]
+) -> list[Evidence]:
     staged_records = []
     for index, record in enumerate(result.evidence):
         if record.file.startswith("raw/"):
@@ -280,23 +289,32 @@ def _materialize_result(
         staged_records.append(
             record.model_copy(update={"file": raw_file, "sha256": sha256_bytes(content)}, deep=True)
         )
+    return staged_records
 
-    if result.finding_details:
-        details_file = f"raw/detectors/{name}/details.json"
-        details_bytes = json_bytes({"findings": result.finding_details})
-        artifacts[details_file] = details_bytes
-        for finding in result.findings:
-            record = evidence_record(
-                name,
-                details_file,
-                f"/findings/{finding.finding_id}",
-                details_bytes,
-            )
-            if record.evidence_id not in finding.evidence_ids:
-                finding.evidence_ids.append(record.evidence_id)
-            if record.evidence_id not in {staged.evidence_id for staged in staged_records}:
-                staged_records.append(record)
 
+def _register_details(
+    name: str,
+    result: DetectionResult,
+    artifacts: dict[str, bytes],
+    staged_records: list[Evidence],
+) -> None:
+    details_file = f"raw/detectors/{name}/details.json"
+    details_bytes = json_bytes({"findings": result.finding_details})
+    artifacts[details_file] = details_bytes
+    for finding in result.findings:
+        record = evidence_record(
+            name,
+            details_file,
+            f"/findings/{finding.finding_id}",
+            details_bytes,
+        )
+        if record.evidence_id not in finding.evidence_ids:
+            finding.evidence_ids.append(record.evidence_id)
+        if record.evidence_id not in {staged.evidence_id for staged in staged_records}:
+            staged_records.append(record)
+
+
+def _write_artifacts(context: DetectorContext, name: str, artifacts: dict[str, bytes]) -> None:
     raw_root = (context.out / "raw").resolve()
     for relative, content in artifacts.items():
         destination = (context.out / relative).resolve()
@@ -304,6 +322,17 @@ def _materialize_result(
             raise ValueError(f"Detector {name} tried to write outside raw/: {relative}.")
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(content)
+
+
+def _materialize_result(
+    context: DetectorContext, name: str, result: DetectionResult
+) -> DetectionResult:
+    """Copy evidence into raw/, register it, then return the runner payload."""
+    artifacts = dict(result.artifacts)
+    staged_records = _stage_evidence(context, name, result, artifacts)
+    if result.finding_details:
+        _register_details(name, result, artifacts, staged_records)
+    _write_artifacts(context, name, artifacts)
     if staged_records:
         context.evidence.record_many(staged_records)
     result.artifacts = artifacts

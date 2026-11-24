@@ -93,6 +93,30 @@ def _fixed_versions(vuln: dict[str, Any], name: str) -> list[str]:
     return fixed
 
 
+def _cvss_intel(evidence: Evidence, vector: str | None) -> list[Evidence]:
+    if not vector:
+        return []
+    update = {
+        "evidence_id": f"{evidence.evidence_id}-cvss",
+        "pointer": f"{evidence.pointer}/severity",
+    }
+    return [evidence.model_copy(update=update)]
+
+
+def _osv_evidence(
+    vid: str, pointer: str, ev_id: str, raw_file: str, raw_sha256: str, tool_version: str
+) -> Evidence:
+    return Evidence(
+        evidence_id=ev_id,
+        tool="osv-scanner",
+        tool_version=tool_version,
+        file=raw_file,
+        pointer=pointer,
+        sha256=raw_sha256,
+        url=f"https://osv.dev/vulnerability/{vid}",
+    )
+
+
 def _convert(
     vuln: dict[str, Any],
     pkg_entry: dict[str, Any],
@@ -106,22 +130,9 @@ def _convert(
     purl = _purl(pkg)
     vid = str(vuln["id"])
     severity = _severity(vuln, pkg_entry.get("groups", []))
-    evidence = Evidence(
-        evidence_id=ev_id,
-        tool="osv-scanner",
-        tool_version=tool_version,
-        file=raw_file,
-        pointer=pointer,
-        sha256=raw_sha256,
-        url=f"https://osv.dev/vulnerability/{vid}",
-    )
+    evidence = _osv_evidence(vid, pointer, ev_id, raw_file, raw_sha256, tool_version)
     vector = _cvss_vector(vuln)
-    intel = (
-        [evidence.model_copy(
-            update={"evidence_id": f"{ev_id}-cvss", "pointer": f"{pointer}/severity"}
-        )]
-        if vector else []
-    )
+    intel = _cvss_intel(evidence, vector)
     finding = Finding(
         finding_id=finding_id("osv", purl, vid, []),
         kind=FindingKind.MALICIOUS if vid.startswith("MAL-") else FindingKind.VULNERABILITY,

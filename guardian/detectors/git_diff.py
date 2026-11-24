@@ -77,6 +77,42 @@ def _baseline_bytes(root: Path, baseline_commit: str, path: str) -> bytes | None
     return result.stdout if result.returncode == 0 else None
 
 
+def _patch_evidence(root: Path, baseline_commit: str, path: str) -> tuple[Evidence, bytes] | None:
+    patch_result = _git(root, "diff", "--no-ext-diff", "--unified=0", baseline_commit, "--", path)
+    if patch_result.returncode != 0:
+        return None
+    patch = patch_result.stdout
+    old_content = _baseline_bytes(root, baseline_commit, path)
+    current_path = root / Path(path)
+    new_content = current_path.read_bytes() if current_path.is_file() else None
+    old_hash = sha256_bytes(old_content) if old_content is not None else "UNKNOWN"
+    new_hash = sha256_bytes(new_content) if new_content is not None else "UNKNOWN"
+    patch_bytes = patch.encode("utf-8")
+    artifact_file = f"raw/git-diff/{path}.patch"
+    pointer = (
+        f"target_file={path};{_line_pointer(patch)};old_sha256={old_hash};new_sha256={new_hash}"
+    )
+    evidence_id = hashlib.sha256(
+        f"git_diff\0{artifact_file}\0{pointer}\0{sha256_bytes(patch_bytes)}".encode()
+    ).hexdigest()[:24]
+    record = Evidence(
+        evidence_id=evidence_id,
+        tool="guardian:git_diff",
+        tool_version="1",
+        file=artifact_file,
+        pointer=pointer,
+        sha256=sha256_bytes(patch_bytes),
+        collected_at=datetime.now(UTC),
+    )
+    return record, patch_bytes
+
+
+def _skipped(
+    ecosystems: list[str], status: CoverageStatus, reason: str, counts: dict[str, int]
+) -> DetectionResult:
+    return DetectionResult(coverage=coverage_rows("git_diff", ecosystems, status, reason, counts))
+
+
 def detect(
     target_path: Path,
     baseline_commit: str | None,
@@ -87,64 +123,21 @@ def detect(
     known_ecosystems = sorted(set(ecosystems or [])) or ["any"]
     counts = {ecosystem: 0 for ecosystem in known_ecosystems}
     if not baseline_commit:
-        return DetectionResult(
-            coverage=coverage_rows(
-                "git_diff",
-                known_ecosystems,
-                CoverageStatus.NOT_APPLICABLE,
-                "No baseline commit",
-                counts,
-            )
+        return _skipped(
+            known_ecosystems, CoverageStatus.NOT_APPLICABLE, "No baseline commit", counts
         )
     name_result = _git(
         root, "diff", "--name-only", "--diff-filter=ACDMRTUXB", baseline_commit, "--"
     )
     if name_result.returncode != 0:
-        return DetectionResult(
-            coverage=coverage_rows(
-                "git_diff",
-                known_ecosystems,
-                CoverageStatus.ERROR,
-                name_result.stderr.strip(),
-                counts,
-            )
-        )
+        return _skipped(known_ecosystems, CoverageStatus.ERROR, name_result.stderr.strip(), counts)
     evidence: list[Evidence] = []
     artifacts: dict[str, bytes] = {}
     for path in sorted(set(name_result.stdout.splitlines())):
-        if not _relevant(path):
-            continue
-        patch_result = _git(
-            root, "diff", "--no-ext-diff", "--unified=0", baseline_commit, "--", path
-        )
-        if patch_result.returncode != 0:
-            continue
-        patch = patch_result.stdout
-        old_content = _baseline_bytes(root, baseline_commit, path)
-        current_path = root / Path(path)
-        new_content = current_path.read_bytes() if current_path.is_file() else None
-        old_hash = sha256_bytes(old_content) if old_content is not None else "UNKNOWN"
-        new_hash = sha256_bytes(new_content) if new_content is not None else "UNKNOWN"
-        patch_bytes = patch.encode("utf-8")
-        artifact_file = f"raw/git-diff/{path}.patch"
-        pointer = (
-            f"target_file={path};{_line_pointer(patch)};old_sha256={old_hash};new_sha256={new_hash}"
-        )
-        evidence_id = hashlib.sha256(
-            f"git_diff\0{artifact_file}\0{pointer}\0{sha256_bytes(patch_bytes)}".encode()
-        ).hexdigest()[:24]
-        evidence.append(
-            Evidence(
-                evidence_id=evidence_id,
-                tool="guardian:git_diff",
-                tool_version="1",
-                file=artifact_file,
-                pointer=pointer,
-                sha256=sha256_bytes(patch_bytes),
-                collected_at=datetime.now(UTC),
-            )
-        )
-        artifacts[artifact_file] = patch_bytes
+        collected = _patch_evidence(root, baseline_commit, path) if _relevant(path) else None
+        if collected is not None:
+            evidence.append(collected[0])
+            artifacts[collected[0].file] = collected[1]
     status = CoverageStatus.FINDING if evidence else CoverageStatus.PASS
     return DetectionResult(
         evidence=evidence,
