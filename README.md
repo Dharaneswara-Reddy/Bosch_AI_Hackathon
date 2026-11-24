@@ -39,6 +39,33 @@ cd Bosch_Guardian_Clean/frontend && npm install && npm run dev   # http://127.0.
 4. **Fix.** The **Fixes** tab shows each proposed fix with its expected risk reduction, rollback and compatibility risk. Click **Approve**: the LangGraph workflow resumes from its pause, applies the fix in a sandbox, builds, runs the tests in a no-network container, rescans and shows before vs. after.
 5. **Report.** **Open full report** (`report.html`) or download `report.json`. Both cover the original findings and evidence, the approved actions, the validation results, the remaining and accepted risks, and the audit trail.
 
+With the demo app:
+- Approving **lodash 4.17.4 → 4.18.0** gives Build ✓, Tests ✓ (7 of 7) and Rescan ✓. It fixes 9 CVEs and reports the one new CVE that 4.18.0 brings in.
+- Approving **express-jwt 0.1.3 → 6.0.0** fails 4 of 7 tests because of a real breaking API change. The fix is marked "not safe to apply", and the rescan results are still shown.
+
+## Known limitations
+
+- **Ecosystems.** Fixes can be applied for npm, pip (`requirements*.txt`) and Bundler (`Gemfile`).
+  - Packages pulled in by another package (transitive) can only be fixed for npm, by upgrading the parent or adding an `overrides` entry.
+  - Poetry/pyproject, yarn and pnpm are not handled.
+  - The lockfile-integrity detector reads npm `package-lock.json` only.
+- **Build and tests.**
+  - They run in a `node:20-slim` container, so this works for npm projects only.
+  - The source mount is read-only, so a build that writes into the source tree (for example `dist/`) fails.
+  - If the container install step fails, build and tests show "not run" with the reason; the fix is not marked failed.
+- **GitHub scans.**
+  - Full source is cloned only after a fix is approved: shallow clone, 150 MB cap, public repositories only.
+  - If the clone fails, the fix is validated from manifests alone and says "tests not run" with the git error.
+- **"Compare with"** runs a second scan of the older version. The result is cached per repository and commit, with a time limit set by `GUARDIAN_BASELINE_TIMEOUT` (default 600 s).
+- **AI quota.**
+  - On free tiers, Groq and Gemini rate limits can run out mid-scan.
+  - The fix planner gets its own retry budget (`GUARDIAN_LLM_PLANNER_TIMEOUT`) and retries the providers.
+  - If it still fails, the UI says "AI planner unavailable (rate limited) — rule-based fixes shown".
+  - Only Groq waits for the provider's Retry-After header.
+- **Persistence.** Scans, review decisions, fix runs and pending approvals survive a backend restart only when `GUARDIAN_SCAN_DIR` points to a permanent folder. The default is a temporary folder.
+- **Scores.** The final confidence for a verified fix is a simple rule: tests passed, and no new findings. The expected risk reduction is calculated from scanner fix data; the rescan gives the actual result.
+- **Reachability** needs source code, so it is "unknown" for GitHub scans, which fetch manifests only.
+
 ## Setup
 
 Use Python 3.11 or later and Docker for live scanner stages.
