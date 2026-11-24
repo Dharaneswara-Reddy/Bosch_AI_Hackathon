@@ -15,6 +15,7 @@ from guardian.models import (
     Scan,
     Scope,
 )
+from guardian.remediate.app_run import AppRun
 from guardian.remediate.diff import FindingRef, RescanDiff
 from guardian.remediate.run import (
     FixPlanError,
@@ -165,3 +166,38 @@ def test_resolve_target_has_no_parent_for_a_direct_package() -> None:
 def test_resolve_target_still_refuses_an_ai_parent_upgrade_without_a_package() -> None:
     with pytest.raises(FixPlanError):
         resolve_target(_proposal(FixAction.UPGRADE_PARENT), _transitive_result())
+
+
+def _with_app(app: AppRun) -> FixRun:
+    return FixRun(scan_id="s", proposal=_proposal(), build=StepResult(status="passed"),
+                  diff=RescanDiff(counts_before={}, counts_after={}),
+                  tests=TestRun(status="passed", passed=7, total=7), app_run=app)
+
+
+def test_a_running_app_adds_the_health_and_image_scan_lines() -> None:
+    run = _with_app(AppRun(
+        status="passed", health_url="http://127.0.0.1:49153/health", http_status=200,
+        image_vulns={"critical": 1, "high": 2, "medium": 4}, image_only_serious=2))
+    assert failure_summary(run) is None
+    assert verification_summary(run).endswith(
+        "Tests passed (7 of 7). App started in a container and answered /health with 200. "
+        "Image scan: 1 critical, 2 high (2 from the base image).")
+
+
+def test_an_unscanned_image_is_named_in_the_summary() -> None:
+    run = _with_app(AppRun(
+        status="passed", health_url="http://127.0.0.1:1/health", http_status=200,
+        image_error="image scan failed: db missing"))
+    assert verification_summary(run).endswith(
+        "answered /health with 200. Image scan unavailable: image scan failed: db missing.")
+
+
+def test_an_app_that_did_not_start_is_not_safe_to_apply() -> None:
+    run = _with_app(AppRun(status="failed", reason="image build failed: boom"))
+    assert failure_summary(run) == "App did not start: image build failed: boom; not safe to apply."
+
+
+def test_an_app_run_that_was_not_run_is_left_out_of_the_summary() -> None:
+    run = _with_app(AppRun(status="not_run", reason="no Dockerfile"))
+    assert failure_summary(run) is None
+    assert verification_summary(run).endswith("Tests passed (7 of 7).")

@@ -19,9 +19,11 @@ from guardian.models import (
     Scan,
     Scope,
 )
+from guardian.remediate.app_run import AppRun, run_application
 from guardian.remediate.run import Decision, FixRun, FixStatus, load_fix
-from guardian.remediate.sandbox import CommandResult
+from guardian.remediate.sandbox import CommandResult, Runner
 from guardian.remediate.workflow import (
+    AppFn,
     FixDeps,
     build_fix_graph,
     is_waiting,
@@ -56,7 +58,9 @@ def _write_out(out: Path, run: RunResult) -> None:
 
 
 class Harness:
-    def __init__(self, work_dir: Path, engine: str | None = None) -> None:
+    def __init__(
+        self, work_dir: Path, engine: str | None = None, app: AppFn | None = None
+    ) -> None:
         self.work_dir = work_dir
         self.container_results: list[CommandResult] = []
         self.container_calls: list[list[str]] = []
@@ -70,7 +74,8 @@ class Harness:
         _write_out(work_dir / "out", _run("4.17.4", with_finding=True))
         self.graph = build_fix_graph(
             work_dir, MemorySaver(),
-            FixDeps(runner=self.command, scan=self.scan, engine=engine, capture=self.capture))
+            FixDeps(runner=self.command, scan=self.scan, engine=engine, capture=self.capture,
+                    app=app or run_application))
 
     def capture(self, command: Sequence[str], cwd: Path, timeout: int) -> CommandResult:
         self.container_calls.append(list(command))
@@ -293,3 +298,71 @@ def test_transitive_fix_applies_the_parent_upgrade_the_lookup_found(tmp_path: Pa
 def test_transitive_fix_falls_back_to_an_override(tmp_path: Path) -> None:
     manifest = json.loads(_approve_transitive(tmp_path, lambda *_: None))
     assert manifest["overrides"] == {"jws": "3.2.3"} and manifest["dependencies"]["ej"] == "0.1.3"
+
+
+TESTS_OK = "# tests 7\n# pass 7\n# fail 0\n"
+
+
+class FakeApp:
+    def __init__(self, result: AppRun) -> None:
+        self.result = result
+        self.calls: list[tuple[Path, str, set[str]]] = []
+
+    def __call__(
+        self, root: Path, folder: Path, proposal_id: str, source_ids: set[str], capture: Runner,
+        engine: str,
+    ) -> AppRun:
+        self.calls.append((root, proposal_id, source_ids))
+        return self.result
+
+
+def _app_harness(tmp_path: Path, app: FakeApp, tests_output: str = TESTS_OK) -> Harness:
+    harness = Harness(tmp_path / "scan", engine="docker", app=app)
+    harness.add_project_with_scripts()
+    (harness.work_dir / "repo" / "Dockerfile").write_text("FROM node:20-slim\n", encoding="utf-8")
+    harness.container_results = [CommandResult(0, ""), CommandResult(0, "built"),
+                                 CommandResult(0 if tests_output == TESTS_OK else 1, tests_output)]
+    return harness
+
+
+def test_the_fixed_app_is_run_after_the_tests_and_summarised(tmp_path: Path) -> None:
+    app = FakeApp(AppRun(status="passed", health_url="http://127.0.0.1:5/health", http_status=200,
+                         image_vulns={"critical": 0, "high": 3}, image_only_serious=3))
+    harness = _app_harness(tmp_path, app)
+    run = _approve(harness)
+    assert run.status is FixStatus.VERIFIED, run.error
+    assert run.app_run is not None and run.app_run.http_status == 200
+    sandbox = harness.work_dir / "fixes" / "p1" / "sandbox"
+    assert [(call[0], call[1]) for call in app.calls] == [(sandbox, "p1")]
+    assert run.summary.endswith(
+        "App started in a container and answered /health with 200. "
+        "Image scan: 0 critical, 3 high (3 from the base image).")
+    stored = load_fix(harness.work_dir, "p1")
+    assert stored is not None and stored.app_run is not None
+
+
+def test_an_app_that_does_not_start_fails_the_fix_but_keeps_the_rescan(tmp_path: Path) -> None:
+    app = FakeApp(AppRun(status="failed", reason="the container did not answer /health"))
+    run = _approve(_app_harness(tmp_path, app))
+    assert run.status is FixStatus.FAILED
+    assert run.summary.startswith(
+        "App did not start: the container did not answer /health; not safe to apply.")
+    assert run.diff is not None and run.diff.fixed
+
+
+def test_the_app_is_not_run_when_the_tests_failed(tmp_path: Path) -> None:
+    app = FakeApp(AppRun(status="passed"))
+    run = _approve(_app_harness(tmp_path, app, tests_output=TAP_FAIL))
+    assert app.calls == []
+    assert run.app_run is not None and run.app_run.status == "not_run"
+    assert "tests did not pass" in run.app_run.reason
+
+
+def test_the_app_is_not_run_without_a_dockerfile(tmp_path: Path) -> None:
+    app = FakeApp(AppRun(status="passed"))
+    harness = _app_harness(tmp_path, app)
+    (harness.work_dir / "repo" / "Dockerfile").unlink()
+    run = _approve(harness)
+    assert app.calls == []
+    assert run.app_run is not None and "no Dockerfile" in run.app_run.reason
+    assert run.status is FixStatus.VERIFIED

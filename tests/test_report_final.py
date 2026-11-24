@@ -17,6 +17,7 @@ from guardian.models import (
     Scan,
     Scope,
 )
+from guardian.remediate.app_run import AppRun
 from guardian.remediate.diff import FindingRef, RescanDiff
 from guardian.remediate.run import Decision, FixRun, FixStatus, save_fix
 from guardian.remediate.sandbox import FixTarget, StepResult, TestRun
@@ -206,3 +207,27 @@ def test_a_dismissed_suspicious_package_is_an_accepted_risk(tmp_path: Path) -> N
         finding_id="a1", decision="dismissed", note="internal fork", reviewer="bo"))
     render(out)
     assert [a.finding_id for a in _report(out).accepted_risks] == ["a1"]
+
+
+def test_the_app_run_and_image_scan_are_reported(tmp_path: Path) -> None:
+    out = _scan_out(tmp_path)
+    app = AppRun(status="passed", health_url="http://127.0.0.1:49153/health", http_status=200,
+                 image_vulns={"critical": 1, "high": 2}, image_only=["CVE-LIBC"],
+                 image_only_serious=2)
+    save_fix(out.parent, _fix().model_copy(update={"app_run": app}))
+    render(out)
+    [validation] = _report(out).validations
+    assert validation.app_run == app
+    expected = ("App started in a container and answered /health with 200. "
+                "Image scan: 1 critical, 2 high (2 from the base image).")
+    assert expected in (out / "report.html").read_text(encoding="utf-8")
+    markdown = (out / "report.md").read_text(encoding="utf-8")
+    assert "Application: App started in a container" in markdown and "Image scan" in markdown
+
+
+def test_a_fix_without_an_app_run_has_no_application_line(tmp_path: Path) -> None:
+    out = _scan_out(tmp_path)
+    save_fix(out.parent, _fix())
+    render(out)
+    assert _report(out).validations[0].app_run is None
+    assert "Application:" not in (out / "report.md").read_text(encoding="utf-8")

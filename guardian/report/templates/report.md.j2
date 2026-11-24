@@ -180,6 +180,11 @@ No fix proposals were produced.
 
 - Tests: {{ (v.tests_status or "not run")|replace("_", " ") }}{% if v.tests_detail %}: {{ v.tests_detail|md }}{% endif %}
 
+{% if v.app_run %}
+- Application: {{ v.app_text|md }}
+
+{% endif %}
+
 {% if v.counts_before %}
 | Risk | critical | high | medium | low |
 |---|---:|---:|---:|---:|

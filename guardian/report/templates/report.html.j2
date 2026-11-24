@@ -163,7 +163,8 @@ details.finding-row > summary { display:flex; flex-wrap:wrap; gap:.4rem .7rem; a
 <p><strong>Action:</strong> {{ v.action|replace("_", " ") }}. <strong>Status:</strong> {{ v.status|replace("_", " ") }}.</p>
 <p><strong>Approval:</strong> {% if v.approved is none %}no decision recorded{% else %}{{ "approved" if v.approved else "rejected" }} by {{ v.reviewer }} at {{ v.decided_at.isoformat() if v.decided_at else "time not recorded" }}{% if v.note %} &mdash; {{ v.note }}{% endif %}{% endif %}.</p>
 <ul><li>Build: {{ v.build_status or "not run" }}{% if v.build_detail %} &mdash; {{ v.build_detail }}{% endif %}</li>
-<li>Tests: {{ (v.tests_status or "not run")|replace("_", " ") }}{% if v.tests_detail %} &mdash; {{ v.tests_detail }}{% endif %}</li></ul>
+<li>Tests: {{ (v.tests_status or "not run")|replace("_", " ") }}{% if v.tests_detail %} &mdash; {{ v.tests_detail }}{% endif %}</li>
+{% if v.app_run %}<li>Application: {{ v.app_text }}</li>{% endif %}</ul>
 {% if v.counts_before %}<div class="table"><table><thead><tr><th>Risk</th>{% for level in ["critical", "high", "medium", "low"] %}<th>{{ level }}</th>{% endfor %}</tr></thead><tbody>
 <tr><td>Before</td>{% for level in ["critical", "high", "medium", "low"] %}<td>{{ v.counts_before.get(level, 0) }}</td>{% endfor %}</tr>
 <tr><td>After</td>{% for level in ["critical", "high", "medium", "low"] %}<td>{{ v.counts_after.get(level, 0) }}</td>{% endfor %}</tr></tbody></table></div>{% endif %}

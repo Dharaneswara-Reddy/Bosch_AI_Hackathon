@@ -4,6 +4,7 @@ import json
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
+from urllib.parse import urlparse
 
 from pydantic import BaseModel
 
@@ -16,6 +17,7 @@ from guardian.models import (
     RunResult,
     Scope,
 )
+from guardian.remediate.app_run import AppRun
 from guardian.remediate.diff import FindingRef, RescanDiff
 from guardian.remediate.sandbox import FixTarget, StepResult, TestRun
 
@@ -56,6 +58,7 @@ class FixRun(BaseModel):
     source: StepResult | None = None
     app_build: TestRun | None = None
     tests: TestRun | None = None
+    app_run: AppRun | None = None
     diff: RescanDiff | None = None
     summary: str = ""
     error: str | None = None
@@ -152,7 +155,22 @@ def failure_summary(run: FixRun) -> str | None:
         names = ", ".join(tests.failed_tests) or "its tests"
         return (f"Tests failed: {tests.failed} of {tests.total} — the upgrade breaks {names}; "
                 "not safe to apply.")
+    app = run.app_run
+    if app and app.status == "failed":
+        return f"App did not start: {app.reason}; not safe to apply."
     return None
+
+
+def app_text(app: AppRun) -> str:
+    if app.status != "passed":
+        return f"Application {app.status.replace('_', ' ')}: {app.reason}."
+    path = urlparse(app.health_url).path
+    text = f"App started in a container and answered {path} with {app.http_status}."
+    if app.image_vulns is None:
+        return f"{text} Image scan unavailable: {app.image_error}."
+    counts = app.image_vulns
+    return (f"{text} Image scan: {counts.get('critical', 0)} critical, {counts.get('high', 0)} "
+            f"high ({app.image_only_serious} from the base image).")
 
 
 def verification_summary(run: FixRun) -> str:
@@ -169,6 +187,8 @@ def verification_summary(run: FixRun) -> str:
         parts.append(_step_text("Build", app.status, app.reason, "failed") + ".")
     if not failure:
         parts.append(_tests_text(tests) + ".")
+    if run.app_run is not None and run.app_run.status == "passed":
+        parts.append(app_text(run.app_run))
     return " ".join(parts)
 
 

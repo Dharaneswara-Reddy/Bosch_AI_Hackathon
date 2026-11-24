@@ -7,4 +7,6 @@ COPY src ./src
 COPY scripts ./scripts
 RUN chown -R node:node /app
 USER node
+ENV HOST=0.0.0.0 PORT=3000
+EXPOSE 3000
 CMD ["npm", "start"]
