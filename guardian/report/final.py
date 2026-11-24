@@ -16,8 +16,9 @@ from guardian.models import (
     RemediationProposal,
     Scan,
 )
+from guardian.remediate.app_run import AppRun
 from guardian.remediate.diff import FindingRef
-from guardian.remediate.run import FIX_FILE, FixRun, FixStatus
+from guardian.remediate.run import FIX_FILE, FixRun, FixStatus, app_text
 
 Verdict = Literal[
     "fixed", "fixed_with_new_findings", "no_effect", "failed", "rejected", "pending"
@@ -75,6 +76,8 @@ class FixValidation(BaseModel):
     build_detail: str
     tests_status: str | None
     tests_detail: str
+    app_run: AppRun | None = None
+    app_text: str = ""
     counts_before: dict[str, int]
     counts_after: dict[str, int]
     fixed: list[FindingRef]
@@ -204,6 +207,7 @@ def _validation(run: FixRun, finding: Finding | None, labels: _Labels) -> FixVal
         build_detail=run.build.detail if run.build else "",
         tests_status=run.tests.status if run.tests else None,
         tests_detail=run.tests.reason if run.tests else "",
+        app_run=run.app_run, app_text=app_text(run.app_run) if run.app_run else "",
         counts_before=diff.counts_before if diff else {},
         counts_after=diff.counts_after if diff else {},
         fixed=diff.fixed if diff else [], introduced=diff.introduced if diff else [],

@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {buildDecision, compareReduction, expectedText, fixTitle, stepCounts, levelRows, needsPolling, primaryAction, statusLabel} from './fixes-logic.js';
+import {appRunText, buildDecision, compareReduction, expectedText, fixTitle, stepCounts, levelRows, needsPolling, primaryAction, statusLabel} from './fixes-logic.js';
 
 const entry = (status, extra = {}) => ({
   status, source: 'rule', unavailable_reason: null,
@@ -83,4 +83,13 @@ test('compareReduction labels a result that fixed more or fewer findings than ex
   assert.equal(compareReduction(expected, fewer).label, 'less than expected');
   const same = {fixed: [...Array(6).fill({risk_level: 'high'}), {risk_level: 'medium'}]};
   assert.equal(compareReduction(expected, same).label, 'as expected');
+});
+
+test('appRunText describes the health answer and image scan, or the reason it did not run', () => {
+  const ok = {status: 'passed', health_url: 'http://127.0.0.1:49153/health', http_status: 200,
+    image_vulns: {critical: 1, high: 2, medium: 5}, image_only: ['CVE-1'], image_only_serious: 2, image_error: ''};
+  assert.equal(appRunText(ok), 'answered /health with 200. Image scan: 1 critical, 2 high (2 from the base image)');
+  assert.equal(appRunText({...ok, image_vulns: null, image_error: 'db missing'}), 'answered /health with 200. Image scan unavailable: db missing');
+  assert.equal(appRunText({status: 'failed', reason: 'image build failed: boom'}), 'image build failed: boom');
+  assert.equal(appRunText({status: 'not_run', reason: 'no Dockerfile'}), 'no Dockerfile');
 });

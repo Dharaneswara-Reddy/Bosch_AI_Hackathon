@@ -19,6 +19,7 @@ from langgraph.types import Command, interrupt
 
 from guardian import runner
 from guardian.models import RemediationProposal, RunResult
+from guardian.remediate.app_run import AppRun, not_run_reason, run_application
 from guardian.remediate.diff import diff_runs
 from guardian.remediate.run import (
     Decision,
@@ -44,6 +45,7 @@ from guardian.remediate.source import overlay_source
 from guardian.remediate.validate import run_captured, validate_project
 
 ScanFn = Callable[[Path, Path], RunResult]
+AppFn = Callable[[Path, Path, str, set[str], Runner, str], AppRun]
 Graph = CompiledStateGraph["FixState", None, "FixState", "FixState"]
 
 
@@ -66,6 +68,7 @@ class FixDeps:
     engine: str | None = field(default_factory=find_engine)
     capture: Runner = run_captured
     parent_lookup: ParentLookup | None = None
+    app: AppFn = run_application
 
 
 def open_checkpointer(path: Path) -> SqliteSaver:
@@ -161,6 +164,19 @@ class _Steps:
         self.deps.scan(folder / "sandbox", folder / "out")
         return run
 
+    def run_app(self, run: FixRun) -> FixRun:
+        folder = self._folder(run)
+        engine = self.deps.engine
+        reason = not_run_reason(folder / "sandbox", run.tests, engine)
+        if reason is not None or engine is None:
+            return run.model_copy(update={"app_run": AppRun(status="not_run", reason=reason or "")})
+        rescanned = load_run(folder / "out").findings
+        source_ids = {i for f in rescanned for i in (f.advisory_id, *f.aliases) if i}
+        done = self.deps.app(
+            folder / "sandbox", folder, run.proposal.proposal_id, source_ids,
+            self.deps.capture, engine)
+        return run.model_copy(update={"app_run": done})
+
     def diff(self, run: FixRun) -> FixRun:
         after = load_run(self._folder(run) / "out")
         return run.model_copy(update={"diff": diff_runs(load_run(self.work_dir / "out"), after)})
@@ -187,8 +203,7 @@ def build_fix_graph(
     graph.add_node("plan", steps.plan)
     graph.add_node("human_approval", steps.human_approval)
     for name in ("record_rejection", "sandbox_apply", "build_check", "fetch_source", "run_tests",
-                 "rescan",
-                 "diff", "verification_summary"):
+                 "rescan", "run_app", "diff", "verification_summary"):
         node: Any = steps.guarded(getattr(steps, name))
         graph.add_node(name, node)
     graph.add_edge(START, "plan")
@@ -198,7 +213,8 @@ def build_fix_graph(
     graph.add_conditional_edges("sandbox_apply", _stop_if_failed("build_check"))
     graph.add_conditional_edges("build_check", _stop_if_failed("fetch_source"))
     for source, target in (("fetch_source", "run_tests"), ("run_tests", "rescan"),
-                           ("rescan", "diff"), ("diff", "verification_summary"),
+                           ("rescan", "run_app"), ("run_app", "diff"),
+                           ("diff", "verification_summary"),
                            ("verification_summary", END)):
         graph.add_edge(source, target)
     return graph.compile(checkpointer=checkpointer)
