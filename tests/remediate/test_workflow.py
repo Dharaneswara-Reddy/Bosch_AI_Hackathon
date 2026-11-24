@@ -220,8 +220,9 @@ def _approve(harness: Harness) -> FixRun:
 def test_failing_tests_mark_the_fix_failed_but_keep_the_rescan(tmp_path: Path) -> None:
     harness = Harness(tmp_path / "scan", engine="docker")
     harness.add_project_with_scripts()
-    harness.container_results = [CommandResult(0, ""), CommandResult(0, "built"),
-                                 CommandResult(1, TAP_FAIL)]
+    harness.container_results = [CommandResult(0, ""), CommandResult(0, ""),
+        CommandResult(0, "built"), CommandResult(0, ""), CommandResult(1, TAP_FAIL),
+        CommandResult(0, "")]
     run = _approve(harness)
     assert run.status is FixStatus.FAILED
     assert run.summary.startswith(
@@ -236,8 +237,9 @@ def test_failing_tests_mark_the_fix_failed_but_keep_the_rescan(tmp_path: Path) -
 def test_passing_build_and_tests_verify_the_fix(tmp_path: Path) -> None:
     harness = Harness(tmp_path / "scan", engine="docker")
     harness.add_project_with_scripts()
-    harness.container_results = [CommandResult(0, ""), CommandResult(0, "built"),
-                                 CommandResult(0, "# tests 7\n# pass 7\n# fail 0\n")]
+    harness.container_results = [CommandResult(0, ""), CommandResult(0, ""),
+        CommandResult(0, "built"), CommandResult(0, ""),
+        CommandResult(0, "# tests 7\n# pass 7\n# fail 0\n"), CommandResult(0, "")]
     run = _approve(harness)
     assert run.status is FixStatus.VERIFIED, run.error
     assert run.tests is not None and (run.tests.passed, run.tests.total) == (7, 7)
@@ -320,8 +322,9 @@ def _app_harness(tmp_path: Path, app: FakeApp, tests_output: str = TESTS_OK) -> 
     harness = Harness(tmp_path / "scan", engine="docker", app=app)
     harness.add_project_with_scripts()
     (harness.work_dir / "repo" / "Dockerfile").write_text("FROM node:20-slim\n", encoding="utf-8")
-    harness.container_results = [CommandResult(0, ""), CommandResult(0, "built"),
-                                 CommandResult(0 if tests_output == TESTS_OK else 1, tests_output)]
+    harness.container_results = [CommandResult(0, ""), CommandResult(0, ""),
+        CommandResult(0, "built"), CommandResult(0, ""),
+        CommandResult(0 if tests_output == TESTS_OK else 1, tests_output), CommandResult(0, "")]
     return harness
 
 

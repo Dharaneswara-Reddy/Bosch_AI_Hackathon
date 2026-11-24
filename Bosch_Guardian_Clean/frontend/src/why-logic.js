@@ -31,12 +31,21 @@ function adjustmentText(finding) {
     + `${finding.ai_adjustment_reason}${evidence}`;
 }
 
+function reachabilityText(finding) {
+  const signal = finding.relevance?.signals?.find(item => item.name === 'reachability');
+  if (!signal?.detail) return null;
+  if (signal.value === 'confirmed') return `Reachability evidence: ${signal.detail}`;
+  if (signal.value === 'not_detected') return `Not observed: ${signal.detail}`;
+  return null;
+}
+
 export function buildWhy(finding) {
   if (!finding.ssvc_decision) return null;
   const level = finding.engine_risk_level || finding.risk_level;
+  const reachability = reachabilityText(finding);
   return {
     steps: [exploitationStep(finding), EXPOSURE[finding.exposure], AUTOMATABLE[finding.automatable],
-      IMPACT[finding.technical_impact]].filter(Boolean),
+      IMPACT[finding.technical_impact], reachability].filter(Boolean),
     outcome: `${DECISION[finding.ssvc_decision]} = ${capitalize(level)}`,
     adjustment: adjustmentText(finding),
     confidence: finding.confidence_score == null ? null : `Confidence ${finding.confidence_score.toFixed(2)}`,

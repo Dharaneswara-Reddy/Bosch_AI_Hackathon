@@ -1,5 +1,6 @@
 """Guardian API: fetch selected files from a public GitHub repo and run the team scan pipeline."""
 
+import json
 import os
 import tempfile
 from collections.abc import AsyncIterator
@@ -16,7 +17,7 @@ from guardian.fetch import FetchError
 from guardian.models import GraphArtifact
 
 from . import pipeline, remediation, review
-from .schemas import ScanRecord, ScanRequest, ScanResult, ScanStarted
+from .schemas import ReachabilityStatus, ScanRecord, ScanRequest, ScanResult, ScanStarted
 
 pipeline.load_root_env()
 
@@ -36,6 +37,7 @@ app.add_middleware(
 )
 app.include_router(remediation.router)
 _default_base: Path | None = None
+_reachability_jobs: set[str] = set()
 
 
 def scan_base() -> Path:
@@ -92,7 +94,8 @@ def start_scan(request: ScanRequest, background: BackgroundTasks) -> ScanStarted
             pipeline.create_demo_record(scan_base())
             if request.demo
             else pipeline.create_record(
-                request.url, request.ref, scan_base(), request.baseline_ref.strip())
+                request.url, request.ref, scan_base(), request.baseline_ref.strip()
+            )
         )
     except FetchError as error:
         raise HTTPException(422, str(error)) from error
@@ -113,6 +116,77 @@ def scan_status(scan_id: str) -> ScanRecord:
 @app.get("/scan/{scan_id}/result")
 def scan_result(scan_id: str) -> ScanResult:
     return pipeline.load_result(_finished(scan_id))
+
+
+def _write_reachability_status(path: Path, data: dict[str, object]) -> None:
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    temporary.replace(path)
+
+
+def _run_reachability(record: ScanRecord) -> None:
+    path = record.work_dir / "out" / "reachability.json"
+    try:
+        from guardian.remediate.workflow import find_engine
+        from guardian.runtime_reachability import run_reachability, update_findings
+
+        result = run_reachability(record.work_dir, find_engine())
+        if result.get("status") == "complete":
+            result["status"] = "running"
+            _write_reachability_status(path, result)
+            try:
+                update_findings(record.work_dir)
+                result["status"] = "complete"
+                _write_reachability_status(path, result)
+            except Exception as error:  # report refresh failures are visible to the user
+                result["status"] = "error"
+                result["reason"] = f"Evidence collected but report refresh failed: {error}"
+                _write_reachability_status(path, result)
+    except Exception as error:  # worker boundary: leave a terminal status for the poller
+        _write_reachability_status(path, {"status": "error", "reason": str(error), "evidence": []})
+    finally:
+        _reachability_jobs.discard(record.scan_id)
+
+
+@app.post("/scan/{scan_id}/reachability", status_code=202)
+def start_reachability(scan_id: str, background: BackgroundTasks) -> ReachabilityStatus:
+    record = _finished(scan_id)
+    if scan_id in _reachability_jobs:
+        raise HTTPException(409, "Reachability check is already running")
+    path = record.work_dir / "out" / "reachability.json"
+    if path.is_file():
+        current = json.loads(path.read_text(encoding="utf-8"))
+        if current.get("status") == "complete":
+            raise HTTPException(409, "Reachability check already completed for this scan")
+    _reachability_jobs.add(scan_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _write_reachability_status(
+        path,
+        {
+            "status": "running",
+            "reason": "",
+            "ran_at": "pending",
+            "tests_status": "not_run",
+            "app_status": "not_run",
+            "evidence": [],
+            "packages_loaded_count": 0,
+        },
+    )
+    background.add_task(_run_reachability, record)
+    return ReachabilityStatus(scan_id=scan_id, status="running")
+
+
+@app.get("/scan/{scan_id}/reachability")
+def reachability_status(scan_id: str) -> ReachabilityStatus:
+    record = _record(scan_id)
+    path = record.work_dir / "out" / "reachability.json"
+    if not path.is_file():
+        return ReachabilityStatus(status="not_run", reason="Reachability has not been requested.")
+    state = json.loads(path.read_text(encoding="utf-8"))
+    if state.get("status") == "running" and scan_id not in _reachability_jobs:
+        state.update({"status": "error", "reason": "The check was interrupted; start it again."})
+        _write_reachability_status(path, state)
+    return ReachabilityStatus.model_validate(state)
 
 
 @app.get("/scan/{scan_id}/changes")

@@ -68,9 +68,9 @@ def test_configured_dns_is_given_only_to_the_networked_install(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("GUARDIAN_SANDBOX_DNS", "1.1.1.1")
-    capture = FakeCapture(OK, OK, CommandResult(0, TAP_PASS))
+    capture = FakeCapture(OK, OK, OK, OK, CommandResult(0, TAP_PASS), OK)
     validate_project(_project(tmp_path, {"build": "tsc", "test": "node --test"}), capture, "docker")
-    install, build, test = capture.calls
+    install, build, test = [call for call in capture.calls if call[1] == "run"]
     assert install[install.index("--dns") + 1] == "1.1.1.1"
     assert "--dns" not in build and "--dns" not in test
 
@@ -83,11 +83,11 @@ def test_not_run_without_a_container_engine(tmp_path: Path) -> None:
 
 
 def test_install_then_isolated_build_and_test(tmp_path: Path) -> None:
-    capture = FakeCapture(OK, OK, CommandResult(0, TAP_PASS))
+    capture = FakeCapture(OK, OK, OK, OK, CommandResult(0, TAP_PASS), OK)
     result = validate_project(
         _project(tmp_path, {"build": "tsc", "test": "node --test"}), capture, "docker"
     )
-    install, build, test = capture.calls
+    install, build, test = [call for call in capture.calls if call[1] == "run"]
     assert install[:2] == ["docker", "run"] and "--ignore-scripts" in install
     assert "--network" not in install
     for command, script in ((build, "build"), (test, "test")):
@@ -100,7 +100,7 @@ def test_install_then_isolated_build_and_test(tmp_path: Path) -> None:
 
 
 def test_failing_tests_report_counts_names_and_output_tail(tmp_path: Path) -> None:
-    capture = FakeCapture(OK, CommandResult(1, TAP_FAIL))
+    capture = FakeCapture(OK, OK, CommandResult(1, TAP_FAIL), OK)
     result = validate_project(_project(tmp_path, {"test": "node --test"}), capture, "docker")
     tests = result.tests
     assert tests.status == "failed"
@@ -113,30 +113,32 @@ def test_failing_tests_report_counts_names_and_output_tail(tmp_path: Path) -> No
 def test_output_tail_keeps_only_the_last_forty_lines(tmp_path: Path) -> None:
     noisy = "\n".join(f"line {n}" for n in range(100))
     result = validate_project(
-        _project(tmp_path, {"test": "x"}), FakeCapture(OK, CommandResult(1, noisy)), "docker"
+        _project(tmp_path, {"test": "x"}),
+        FakeCapture(OK, OK, CommandResult(1, noisy), OK),
+        "docker",
     )
     assert result.tests.output_tail[0] == "line 60" and len(result.tests.output_tail) == 40
 
 
 def test_failed_build_skips_the_tests(tmp_path: Path) -> None:
-    capture = FakeCapture(OK, CommandResult(2, "SyntaxError: bad"))
+    capture = FakeCapture(OK, OK, CommandResult(2, "SyntaxError: bad"), OK)
     result = validate_project(_project(tmp_path, {"build": "b", "test": "t"}), capture, "docker")
     assert result.build.status == "failed" and "SyntaxError" in result.build.output_tail[-1]
     assert result.tests.status == "not_run" and "build failed" in result.tests.reason
-    assert len(capture.calls) == 2
+    assert len(capture.calls) == 4
 
 
 def test_failed_install_is_reported_not_silently_ignored(tmp_path: Path) -> None:
-    capture = FakeCapture(CommandResult(1, "E404 not found"))
+    capture = FakeCapture(CommandResult(1, "E404 not found"), OK)
     result = validate_project(_project(tmp_path, {"test": "t"}), capture, "docker")
     assert result.tests.status == "not_run"
     assert "install failed" in result.tests.reason and "E404" in result.tests.reason
 
 
 def test_a_timed_out_container_is_killed_by_name(tmp_path: Path) -> None:
-    capture = FakeCapture(OK, CommandResult(124, "timed out after 600s: docker"), OK)
+    capture = FakeCapture(OK, OK, CommandResult(124, "timed out after 600s: docker"), OK)
     result = validate_project(_project(tmp_path, {"test": "t"}), capture, "docker")
-    run_command = capture.calls[1]
+    run_command = capture.calls[2]
     name = run_command[run_command.index("--name") + 1]
-    assert capture.calls[2] == ["docker", "rm", "-f", name]
+    assert capture.calls[3] == ["docker", "rm", "-f", name]
     assert result.tests.status == "failed" and "timed out" in result.tests.reason

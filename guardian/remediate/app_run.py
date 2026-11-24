@@ -20,7 +20,7 @@ from typing import Any, Literal
 from pydantic import BaseModel
 
 from guardian.remediate.sandbox import Runner, TestRun
-from guardian.remediate.validate import KILL_TIMEOUT_S, LIMITS, TAIL_LINES
+from guardian.remediate.validate import CONTAINER_IMAGE, KILL_TIMEOUT_S, LIMITS, TAIL_LINES
 from guardian.scanners.grype import GRYPE_DB_DIR, GRYPE_DB_VOLUME, GRYPE_IMAGE
 
 DEFAULT_PORT = 3000
@@ -118,14 +118,131 @@ def _health(
     polled = _poll_health(url, get, timeout_s) if host_port else (None, "", "no port published")
     status, snippet, error = polled
     if not error:
-        return AppRun(
-            status="passed", health_url=url, http_status=status, response_snippet=snippet)
+        return AppRun(status="passed", health_url=url, http_status=status, response_snippet=snippet)
     logs = capture([engine, "logs", "--tail", str(TAIL_LINES), name], root, KILL_TIMEOUT_S)
     tail = logs.output[-LOG_TAIL_CHARS:].strip()
     reason = f"the container did not answer {path} with 2xx within {int(timeout_s)}s ({error})"
     return AppRun(
-        status="failed", health_url=url, http_status=status, response_snippet=snippet,
-        reason=reason + (f"; logs: {tail}" if tail else ""))
+        status="failed",
+        health_url=url,
+        http_status=status,
+        response_snippet=snippet,
+        reason=reason + (f"; logs: {tail}" if tail else ""),
+    )
+
+
+def _traced_start_command(
+    engine: str, name: str, root: Path, trace: Path, hook: Path, loader: Path
+) -> list[str]:
+    command = [
+        engine,
+        "run",
+        "-d",
+        "--rm",
+        "--name",
+        name,
+        "--network",
+        "none",
+        "--read-only",
+        "--cap-drop",
+        "ALL",
+        *LIMITS,
+        "--security-opt",
+        "no-new-privileges",
+        "--tmpfs",
+        "/tmp",
+        "-e",
+        "HOME=/tmp",
+    ]
+    get_uid = getattr(os, "getuid", None)
+    get_gid = getattr(os, "getgid", None)
+    if callable(get_uid) and callable(get_gid):
+        command.extend(["--user", f"{get_uid()}:{get_gid()}"])
+    command.extend(
+        [
+            "-e",
+            "NODE_OPTIONS=--require=/guardian-trace.cjs --experimental-loader=file:///guardian-trace-loader.mjs",
+            "-e",
+            "GUARDIAN_TRACE_FILE=/trace.jsonl",
+            "-e",
+            "GUARDIAN_TRACE_MAX_BYTES=5242880",
+            "-v",
+            f"{root}:/work:ro",
+            "-v",
+            f"{trace}:/trace.jsonl:rw",
+            "-v",
+            f"{hook}:/guardian-trace.cjs:ro",
+            "-v",
+            f"{loader}:/guardian-trace-loader.mjs:ro",
+            "-w",
+            "/work",
+            CONTAINER_IMAGE,
+            "npm",
+            "start",
+        ]
+    )
+    return command
+
+
+def _container_http_get(engine: str, name: str, root: Path, capture: Runner) -> HttpGet:
+    script = (
+        "fetch(process.argv[1]).then(async r=>console.log(JSON.stringify({status:r.status,"
+        "body:(await r.text()).slice(0,200)}))).catch(e=>{console.error(e);process.exit(1)})"
+    )
+
+    def get(url: str, timeout: float) -> tuple[int, str]:
+        done = capture([engine, "exec", name, "node", "-e", script, url], root, int(timeout) + 1)
+        if done.returncode:
+            raise OSError(done.output or "application health check did not answer")
+        for line in reversed(done.output.splitlines()):
+            try:
+                result = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(result, dict) and "status" in result:
+                return int(result["status"]), str(result.get("body", ""))
+        raise OSError("application health check returned no HTTP result")
+
+    return get
+
+
+def run_traced_application(
+    root: Path,
+    trace: Path,
+    hook: Path,
+    loader: Path,
+    engine: str,
+    capture: Runner,
+    timeout_s: float = HEALTH_TIMEOUT_S,
+) -> AppRun:
+    """Start npm start offline with tracing enabled, then reuse the health poll logic."""
+    name = f"guardian-reach-app-{uuid.uuid4().hex[:12]}"
+    port = int(os.environ.get("GUARDIAN_APP_PORT", str(DEFAULT_PORT)))
+    path = os.environ.get("GUARDIAN_APP_HEALTH_PATH", DEFAULT_HEALTH_PATH)
+    try:
+        started = capture(
+            _traced_start_command(engine, name, root, trace, hook, loader), root, KILL_TIMEOUT_S
+        )
+        if started.returncode:
+            return AppRun(
+                status="failed",
+                reason=f"application container did not start: {started.output[-300:]}",
+            )
+        url = f"http://127.0.0.1:{port}{path}"
+        status, snippet, error = _poll_health(
+            url, _container_http_get(engine, name, root, capture), timeout_s
+        )
+        if error:
+            return AppRun(
+                status="failed",
+                health_url=url,
+                http_status=status,
+                response_snippet=snippet,
+                reason=f"application did not answer {path}: {error}",
+            )
+        return AppRun(status="passed", health_url=url, http_status=status, response_snippet=snippet)
+    finally:
+        capture([engine, "rm", "-f", name], root, KILL_TIMEOUT_S)
 
 
 def _severity(raw: object) -> str:
@@ -180,8 +297,14 @@ def _scan_image(
 
 
 def run_application(
-    root: Path, folder: Path, proposal_id: str, source_ids: set[str], capture: Runner,
-    engine: str, get: HttpGet = http_get, health_timeout_s: float = HEALTH_TIMEOUT_S,
+    root: Path,
+    folder: Path,
+    proposal_id: str,
+    source_ids: set[str],
+    capture: Runner,
+    engine: str,
+    get: HttpGet = http_get,
+    health_timeout_s: float = HEALTH_TIMEOUT_S,
 ) -> AppRun:
     tag = f"guardian-fix-{proposal_id}:latest"
     built = capture(_build_command(engine, tag), root, BUILD_TIMEOUT_S)

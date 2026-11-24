@@ -15,6 +15,7 @@ from guardian.models import (
     CoverageArtifact,
     Evidence,
     Finding,
+    ReachabilityEvidence,
     RiskAdjustment,
     Scan,
 )
@@ -57,6 +58,17 @@ class ScanRecord(BaseModel):
 class ScanStarted(BaseModel):
     scan_id: str
     status: Status
+
+
+class ReachabilityStatus(BaseModel):
+    scan_id: str | None = None
+    status: Literal["running", "complete", "not_run", "error"]
+    reason: str = ""
+    ran_at: str = ""
+    tests_status: str = "not_run"
+    app_status: str = "not_run"
+    evidence: list[ReachabilityEvidence] = Field(default_factory=list)
+    packages_loaded_count: int = 0
 
 
 class FetchSummary(BaseModel):

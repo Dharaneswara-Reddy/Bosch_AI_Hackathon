@@ -125,6 +125,25 @@ class Reachability(StrEnum):
     UNKNOWN = "unknown"
 
 
+class ReachabilityEvidence(BaseModel):
+    package: str
+    version: str
+    source: Literal["runtime", "static_chain", "app_import"]
+    chain: list[str] = Field(default_factory=list)
+    file: str | None = None
+    observed_during: list[str] = Field(default_factory=list)
+
+
+class ReachabilityRecord(BaseModel):
+    status: Literal["running", "complete", "not_run", "error"]
+    reason: str = ""
+    ran_at: str = ""
+    tests_status: str = "not_run"
+    app_status: str = "not_run"
+    evidence: list[ReachabilityEvidence] = Field(default_factory=list)
+    packages_loaded_count: int = 0
+
+
 class CoverageStatus(StrEnum):
     FINDING = "finding"
     PASS = "pass"

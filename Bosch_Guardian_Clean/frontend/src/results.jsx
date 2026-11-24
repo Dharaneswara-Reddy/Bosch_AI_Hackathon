@@ -1,4 +1,4 @@
-import React, {useMemo, useState} from 'react';
+import React, {useEffect, useMemo, useState} from 'react';
 import {ReactFlow, Background, Controls, MarkerType} from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import {layoutSubgraph, selectSubgraph} from './graph-layout.js';
@@ -276,6 +276,41 @@ export function Results({scanId, status, result, graph, onDecided = () => {}}) {
   const [tab, setTab] = useState('findings');
   const [selectedId, setSelectedId] = useState(null);
   const [path, setPath] = useState([]);
+  const [reachability, setReachability] = useState({status: 'not_run', reason: ''});
+  useEffect(() => {
+    let active = true;
+    fetch(`${API}/scan/${scanId}/reachability`).then(response => response.ok ? response.json() : null)
+      .then(state => { if (active && state) setReachability(current => current.status === 'not_run' ? state : current); })
+      .catch(() => {});
+    return () => { active = false; };
+  }, [scanId]);
+  useEffect(() => {
+    let active = true;
+    const poll = async () => {
+      try {
+        const response = await fetch(`${API}/scan/${scanId}/reachability`);
+        if (!response.ok) return;
+        const state = await response.json();
+        if (active) {
+          setReachability(state);
+          if (state.status === 'complete') onDecided();
+        }
+      } catch (_) { /* retry on the next poll */ }
+    };
+    if (reachability.status !== 'running') return () => { active = false; };
+    const timer = setInterval(poll, 1500);
+    poll();
+    return () => { active = false; clearInterval(timer); };
+  }, [reachability.status, scanId, onDecided]);
+  const startReachability = async () => {
+    setReachability({status: 'running', reason: 'Starting the isolated npm check.'});
+    try {
+      const response = await fetch(`${API}/scan/${scanId}/reachability`, {method: 'POST'});
+      const body = await response.json();
+      if (!response.ok) setReachability({status: 'error', reason: body.detail || 'Could not start reachability.'});
+      else setReachability(body);
+    } catch (error) { setReachability({status: 'error', reason: String(error)}); }
+  };
   const showPath = f => { setPath(f.dependency_path); setTab('graph'); };
   const evidence = useMemo(() => new Map(result.evidence.map(e => [e.evidence_id, e])), [result]);
   const nodes = useMemo(() => new Map((graph?.nodes || []).map(n => [n.component_id, n])), [graph]);
@@ -290,10 +325,19 @@ export function Results({scanId, status, result, graph, onDecided = () => {}}) {
     <div className="results-heading"><div><h2>Guardian results</h2>
       <p>{status.repository_url} <span className="separator">/</span> <code>{result.fetch.commit_sha.slice(0, 10)}</code></p></div>
       <div className="actions">
+        <button className="outline" onClick={startReachability}
+          disabled={reachability.status === 'running' || reachability.status === 'complete'}>
+          {reachability.status === 'running' ? 'Checking reachability…' : 'Check reachability'}
+        </button>
         <a className="outline" href={`${API}/scan/${scanId}/report`} target="_blank" rel="noreferrer"><FileText size={16}/> Open full report</a>
         <a className="outline" href={`${API}/scan/${scanId}/report.json`} download="report.json"><Download size={16}/> Download report.json</a>
         <a className="outline" href={`${API}/scan/${scanId}/sbom`} download="sbom.cdx.json"><Download size={16}/> Download SBOM</a>
       </div></div>
+    {reachability.status !== 'not_run' && <div className="notice">
+      <div><strong>Reachability: {reachability.status}</strong><p>{reachability.reason}</p>
+        {(reachability.tests_status || reachability.app_status) && <p>Tests: {reachability.tests_status || 'not run'} · App: {reachability.app_status || 'not run'}</p>}
+        {reachability.packages_loaded_count != null && <p>Packages observed: {reachability.packages_loaded_count}</p>}</div>
+    </div>}
     <div className="summary-grid card"><div><span>Scan status</span><strong>{result.scan.status}</strong></div>
       <div><span>LLM status</span><strong>{result.scan.llm_status}</strong></div>
       <div><span>Resolution</span><strong>{result.scan.resolution}</strong></div>
