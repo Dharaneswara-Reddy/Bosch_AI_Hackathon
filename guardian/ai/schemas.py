@@ -13,6 +13,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from guardian.ai.state import FixAction
+from guardian.models import RiskAdjustment
 
 MAX_CLAIMS_PER_STEP = 8
 MAX_CLAIM_CHARS = 600
@@ -44,12 +45,29 @@ class ClaimReview(BaseModel):
     reason: str = Field(min_length=1, max_length=300)
 
 
+class AdjustmentReview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    finding_id: str
+    verdict: Literal["supported", "overstated", "unsupported"]
+    reason: str = Field(min_length=1, max_length=300)
+
+
 class CriticReply(BaseModel):
-    """Independent reviewer: may only keep, downgrade or reject accepted claims."""
+    """Independent reviewer: may only keep, downgrade or reject accepted claims and adjustments."""
 
     model_config = ConfigDict(extra="forbid")
 
     reviews: list[ClaimReview] = Field(max_length=40)
+    adjustment_reviews: list[AdjustmentReview] = Field(default_factory=list, max_length=40)
+
+
+class RiskReply(BaseModel):
+    """Risk analyst: one-level adjustments only; an empty list means no change."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    adjustments: list[RiskAdjustment] = Field(max_length=40)
 
 
 class LLMProposal(BaseModel):
@@ -95,13 +113,40 @@ STRICT_REPLY_SCHEMA: JsonSchema = _list_of(
     "claims",
 )
 
-STRICT_CRITIC_SCHEMA: JsonSchema = _list_of(
+_VERDICT: JsonSchema = {"type": "string", "enum": ["supported", "overstated", "unsupported"]}
+_LEVEL: JsonSchema = {"type": "string", "enum": ["critical", "high", "medium", "low"]}
+
+STRICT_CRITIC_SCHEMA: JsonSchema = _strict_object(
     {
-        "claim_id": {"type": "string"},
-        "verdict": {"type": "string", "enum": ["supported", "overstated", "unsupported"]},
+        "reviews": {
+            "type": "array",
+            "items": _strict_object(
+                {"claim_id": {"type": "string"}, "verdict": _VERDICT, "reason": {"type": "string"}}
+            ),
+        },
+        "adjustment_reviews": {
+            "type": "array",
+            "items": _strict_object(
+                {
+                    "finding_id": {"type": "string"},
+                    "verdict": _VERDICT,
+                    "reason": {"type": "string"},
+                }
+            ),
+        },
+    }
+)
+
+STRICT_RISK_SCHEMA: JsonSchema = _list_of(
+    {
+        "finding_id": {"type": "string"},
+        "from_level": _LEVEL,
+        "to_level": _LEVEL,
+        "direction": {"type": "string", "enum": ["raise", "lower"]},
         "reason": {"type": "string"},
+        "evidence_ids": _STRINGS,
     },
-    "reviews",
+    "adjustments",
 )
 
 STRICT_PLANNER_SCHEMA: JsonSchema = _list_of(

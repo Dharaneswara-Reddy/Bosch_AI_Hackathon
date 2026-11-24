@@ -22,7 +22,10 @@ def _fake_fetch(url: str, ref: str, dest: Path, token: str | None) -> Any:
     dest.mkdir(parents=True)
     (dest / "package-lock.json").write_text("{}")
     result = FetchResult(
-        url=url, ref="main", commit_sha="b" * 40, dest=dest,
+        url=url,
+        ref="main",
+        commit_sha="b" * 40,
+        dest=dest,
         files=[FetchedFile(path="package-lock.json", size=2, sha256="x")],
     )
     write_manifest(result)
@@ -33,8 +36,13 @@ def _fake_scan(target: Path, out: Path, **_: object) -> RunResult:
     from datetime import UTC, datetime
 
     out.mkdir(parents=True)
-    scan = Scan(scan_id="s", target=str(target), started_at=datetime.now(UTC),
-                status=ScanStatus.PARTIAL, errors={"osv": "boom"})
+    scan = Scan(
+        scan_id="s",
+        target=str(target),
+        started_at=datetime.now(UTC),
+        status=ScanStatus.PARTIAL,
+        errors={"osv": "boom"},
+    )
     (out / "run.json").write_text(scan.model_dump_json())
     (out / "coverage.json").write_text("{}")
     (out / "findings.json").write_text(json.dumps({"findings": [], "evidence": []}))
@@ -45,7 +53,8 @@ def _fake_scan(target: Path, out: Path, **_: object) -> RunResult:
 
 
 def test_scan_flow_reports_guardian_status(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(pipeline, "fetch_repo_files", _fake_fetch)
     monkeypatch.setattr(pipeline.runner, "scan", _fake_scan)
@@ -64,7 +73,8 @@ def test_scan_flow_reports_guardian_status(
 
 
 def test_fetch_failure_is_reported_as_failed(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from guardian.fetch import FetchError
 
@@ -77,6 +87,19 @@ def test_fetch_failure_is_reported_as_failed(
     assert status["status"] == "failed"
     assert "rate limit" in status["error"]
     assert client.get(f"/scan/{scan_id}/result").status_code == 409
+
+
+def test_health_reports_the_provider_chain_with_keys(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GUARDIAN_LLM_PROVIDER", "groq")
+    monkeypatch.setenv("GUARDIAN_LLM_API_KEY", "k")
+    monkeypatch.setenv("GUARDIAN_LLM_FALLBACKS", "gemini,openai")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("GEMINI_API_KEY", "g")
+    assert client.get("/health").json()["ai"] == "groq→gemini"
+    monkeypatch.delenv("GEMINI_API_KEY")
+    assert client.get("/health").json()["ai"] == "groq"
 
 
 def test_invalid_url_is_422(client: TestClient) -> None:
@@ -99,7 +122,8 @@ def test_ai_is_enabled_only_with_provider_and_key(monkeypatch: pytest.MonkeyPatc
 
 
 def test_fake_claim_injection_and_claims_in_result(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from guardian.models import AgentClaim, ClaimKind
 
@@ -108,25 +132,61 @@ def test_fake_claim_injection_and_claims_in_result(
     def scan(target: Path, out: Path, **kwargs: object) -> RunResult:
         seen.update(kwargs)
         result = _fake_scan(target, out)
-        claim = AgentClaim(claim_id="c1", step="injected", text="fake", kind=ClaimKind.EVIDENCE,
-                           rejected_reason="advisory CVE-2026-31337 is not in the cited findings")
-        (out / "findings.json").write_text(json.dumps(
-            {"findings": [], "evidence": [], "claims": [claim.model_dump(mode="json")]}))
+        claim = AgentClaim(
+            claim_id="c1",
+            step="injected",
+            text="fake",
+            kind=ClaimKind.EVIDENCE,
+            rejected_reason="advisory CVE-2026-31337 is not in the cited findings",
+        )
+        (out / "findings.json").write_text(
+            json.dumps({"findings": [], "evidence": [], "claims": [claim.model_dump(mode="json")]})
+        )
         return result
 
     monkeypatch.setenv("GUARDIAN_LLM_PROVIDER", "none")
     monkeypatch.setattr(pipeline, "fetch_repo_files", _fake_fetch)
     monkeypatch.setattr(pipeline.runner, "scan", scan)
-    scan_id = client.post("/scan", json={"url": "https://github.com/o/r",
-                                         "inject_fake_claim": True}).json()["scan_id"]
+    scan_id = client.post(
+        "/scan", json={"url": "https://github.com/o/r", "inject_fake_claim": True}
+    ).json()["scan_id"]
     assert seen["use_llm"] is False
     assert seen["inject_claim"] == pipeline.FAKE_CLAIM and pipeline.FAKE_CLAIM.is_file()
     claims = client.get(f"/scan/{scan_id}/result").json()["claims"]
     assert claims[0]["rejected_reason"].startswith("advisory CVE-2026-31337")
 
 
+def test_risk_adjustments_and_agreement_reach_the_result(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from guardian.models import RiskAdjustment
+
+    adjustment = RiskAdjustment(
+        finding_id="f1", from_level="medium", to_level="high", direction="raise",
+        reason="Needs the legacy parser.", evidence_ids=["e1"],
+    )
+
+    def scan(target: Path, out: Path, **kwargs: object) -> RunResult:
+        result = _fake_scan(target, out)
+        (out / "findings.json").write_text(json.dumps({
+            "findings": [], "evidence": [],
+            "risk_adjustments": [adjustment.model_dump(mode="json")], "agreement": {"f1": True},
+        }))
+        return result
+
+    monkeypatch.setenv("GUARDIAN_LLM_PROVIDER", "none")
+    monkeypatch.setattr(pipeline, "fetch_repo_files", _fake_fetch)
+    monkeypatch.setattr(pipeline.runner, "scan", scan)
+    scan_id = client.post("/scan", json={"url": "https://github.com/o/r"}).json()["scan_id"]
+    body = client.get(f"/scan/{scan_id}/result").json()
+    assert body["risk_adjustments"][0]["to_level"] == "high"
+    assert body["agreement"] == {"f1": True}
+
+
 def test_root_env_file_is_loaded_without_overriding(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     env = tmp_path / ".env"
     env.write_text("GUARDIAN_TEST_A=from_file\nGUARDIAN_TEST_B=from_file\n")
@@ -134,13 +194,15 @@ def test_root_env_file_is_loaded_without_overriding(
     monkeypatch.delenv("GUARDIAN_TEST_A", raising=False)
     pipeline.load_root_env(env)
     import os
+
     assert os.environ["GUARDIAN_TEST_A"] == "from_file"
     assert os.environ["GUARDIAN_TEST_B"] == "from_env"
     monkeypatch.delenv("GUARDIAN_TEST_A")
 
 
 def test_demo_scan_copies_the_local_demo_app_with_source(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     seen: dict[str, Path] = {}
 
@@ -164,3 +226,126 @@ def test_demo_scan_copies_the_local_demo_app_with_source(
 
 def test_url_is_required_unless_demo(client: TestClient) -> None:
     assert client.post("/scan", json={"url": ""}).status_code == 422
+
+
+def _graph_json(*packages: tuple[str, str]) -> str:
+    return json.dumps({"nodes": [
+        {"component_id": f"{n}@{v}", "purl": f"pkg:npm/{n}@{v}", "name": n, "version": v,
+         "ecosystem": "npm"} for n, v in packages]})
+
+
+def _baseline_scan_fakes(
+    monkeypatch: pytest.MonkeyPatch, fail_baseline: bool = False,
+) -> dict[str, dict[str, object]]:
+    calls: dict[str, dict[str, object]] = {}
+
+    def fetch(url: str, ref: str, dest: Path, token: str | None) -> Any:
+        result = _fake_fetch(url, ref, dest, token)
+        sha = "a" if "baseline" in str(dest) else "c"
+        result.ref, result.commit_sha = ref or "main", sha * 40
+        return result
+
+    def scan(target: Path, out: Path, **kwargs: object) -> RunResult:
+        is_baseline = out.parent.name == "baseline"
+        calls["baseline" if is_baseline else "main"] = dict(kwargs)
+        if is_baseline and fail_baseline:
+            raise RuntimeError("baseline scanner crashed")
+        result = _fake_scan(target, out)
+        (out / "graph.json").write_text(
+            _graph_json(("lodash", "4.17.0")) if is_baseline
+            else _graph_json(("lodash", "4.17.21"), ("left-pad", "1.0.0")))
+        return result
+
+    monkeypatch.setattr(pipeline, "fetch_repo_files", fetch)
+    monkeypatch.setattr(pipeline.runner, "scan", scan)
+    return calls
+
+
+def test_baseline_ref_adds_a_change_summary(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _baseline_scan_fakes(monkeypatch)
+    scan_id = client.post("/scan", json={
+        "url": "https://github.com/o/r", "ref": "main", "baseline_ref": "v1"}).json()["scan_id"]
+    assert calls["baseline"]["use_llm"] is False
+    assert isinstance(calls["main"]["baseline"], Path)
+    assert calls["main"]["baseline"].parts[-2:] == ("baseline", "out")
+    changes = client.get(f"/scan/{scan_id}/changes").json()
+    assert changes["baseline_ref"] == "v1" and changes["baseline_commit"] == "a" * 40
+    assert [p["name"] for p in changes["added"]] == ["left-pad"]
+    assert changes["upgraded"][0]["to_version"] == "4.17.21"
+    assert client.get(f"/scan/{scan_id}/result").json()["changes"]["baseline_ref"] == "v1"
+    assert client.get(f"/scan/{scan_id}").json()["baseline_ref"] == "v1"
+
+
+def test_failed_baseline_keeps_the_main_scan(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _baseline_scan_fakes(monkeypatch, fail_baseline=True)
+    scan_id = client.post("/scan", json={
+        "url": "https://github.com/o/r", "baseline_ref": "v1"}).json()["scan_id"]
+    status = client.get(f"/scan/{scan_id}").json()
+    assert "baseline scanner crashed" in status["errors"]["baseline"]
+    assert calls["main"].get("baseline") is None
+    assert client.get(f"/scan/{scan_id}/result").json()["changes"] is None
+    assert client.get(f"/scan/{scan_id}/changes").status_code == 404
+
+
+def test_changes_are_404_without_a_baseline(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _baseline_scan_fakes(monkeypatch)
+    scan_id = client.post("/scan", json={"url": "https://github.com/o/r"}).json()["scan_id"]
+    assert client.get(f"/scan/{scan_id}/changes").status_code == 404
+    assert client.get(f"/scan/{scan_id}/result").json()["changes"] is None
+
+
+def test_baseline_is_not_allowed_with_the_demo(client: TestClient) -> None:
+    response = client.post("/scan", json={"demo": True, "baseline_ref": "v1"})
+    assert response.status_code == 422
+    assert "baseline" in response.text.lower()
+
+
+def test_baseline_scan_is_cached_per_repository_and_commit(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _baseline_scan_fakes(monkeypatch)
+    baseline_scans: list[Path] = []
+    inner = pipeline.runner.scan
+
+    def counting(target: Path, out: Path, **kwargs: object) -> RunResult:
+        if out.parent.name == "baseline":
+            baseline_scans.append(out)
+        return inner(target, out, **kwargs)
+
+    monkeypatch.setattr(pipeline.runner, "scan", counting)
+    body = {"url": "https://github.com/o/r", "ref": "main", "baseline_ref": "v1"}
+    first = client.post("/scan", json=body).json()["scan_id"]
+    second = client.post("/scan", json=body).json()["scan_id"]
+    assert len(baseline_scans) == 1
+    changes = [client.get(f"/scan/{sid}/changes").json() for sid in (first, second)]
+    assert changes[0] == changes[1]
+    assert calls["main"]["baseline"].parts[-2:] == ("baseline", "out")
+
+
+def test_baseline_timeout_is_reported_and_main_scan_continues(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import time
+
+    calls = _baseline_scan_fakes(monkeypatch)
+    inner = pipeline.runner.scan
+
+    def slow(target: Path, out: Path, **kwargs: object) -> RunResult:
+        if out.parent.name == "baseline":
+            time.sleep(2)
+        return inner(target, out, **kwargs)
+
+    monkeypatch.setattr(pipeline.runner, "scan", slow)
+    monkeypatch.setenv("GUARDIAN_BASELINE_TIMEOUT", "0.2")
+    scan_id = client.post("/scan", json={
+        "url": "https://github.com/o/r", "baseline_ref": "v1"}).json()["scan_id"]
+    status = client.get(f"/scan/{scan_id}").json()
+    assert "timed out" in status["errors"]["baseline"]
+    assert status["status"] != "failed"
+    assert calls["main"].get("baseline") is None

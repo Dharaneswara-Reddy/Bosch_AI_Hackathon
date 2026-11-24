@@ -22,15 +22,32 @@ from uuid import uuid4
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 
 from guardian.ai.review import load_injected, run_review
+from guardian.adjust import apply_adjustments
 from guardian.analysis import apply_relevance, apply_scope
+from guardian.confidence import apply_confidence
 from guardian.config import Settings
 from guardian.coverage import build_coverage
 from guardian.evidence import EvidenceStore, file_sha256
 from guardian.models import (
-    UNKNOWN, Component, CoverageArtifact, CoverageRow, CoverageStatus, Edge,
-    Evidence, Finding, FindingsArtifact, GraphArtifact, LlmStatus, Resolution, RunResult,
-    Scan, ScanStatus, Scope,
+    UNKNOWN,
+    Component,
+    CoverageArtifact,
+    CoverageRow,
+    CoverageStatus,
+    Edge,
+    Evidence,
+    Finding,
+    FindingsArtifact,
+    GraphArtifact,
+    LlmStatus,
+    Resolution,
+    RunResult,
+    Scan,
+    ScanStatus,
+    Scope,
 )
+from guardian.policy import DEFAULT_POLICY_PATH, load_policy
+from guardian.remediate.candidates import merge_proposals, rule_based_proposals
 from guardian.risk import assess
 from guardian.tools import ToolError
 
@@ -94,9 +111,10 @@ def _checkpoint(context: ScanContext) -> None:
     result.evidence = context.evidence.records()
     findings = FindingsArtifact(
         findings=result.findings, evidence=result.evidence, claims=result.claims,
-        agent_trace=result.agent_trace,
+        agent_trace=result.agent_trace, risk_adjustments=result.risk_adjustments,
+        agreement=result.agreement, proposals=result.proposals,
     )
-    for filename, data in zip(OUTPUT_FILES, (result.scan, result.graph, findings, result.coverage)):
+    for filename, data in zip(OUTPUT_FILES, (result.scan, result.graph, findings, result.coverage), strict=False):
         _write_model(context.out / filename, data)
 
 
@@ -165,7 +183,7 @@ def _normalize_graph(path: Path, sbom: Path, graph: object) -> GraphArtifact:
         )
         for component in bom.components if component.ref or component.purl != UNKNOWN
     ]
-    edge_rows = getattr(graph, "edges")(data=True)
+    edge_rows = graph.edges(data=True)
     edges = [
         Edge(parent_id=str(parent), child_id=str(child), edge_source=attrs.get("edge_source", "sbom"))
         for parent, child, attrs in edge_rows
@@ -283,7 +301,7 @@ def _detectors(context: ScanContext) -> None:
             name = getattr(detector, "name", type(detector).__name__)
 
             def apply(active: ScanContext, plugin: object = detector) -> None:
-                result = getattr(plugin, "run")(active)
+                result = plugin.run(active)
                 findings = TypeAdapter(list[Finding]).validate_python(result.findings)
                 rows = TypeAdapter(list[CoverageRow]).validate_python(result.coverage_rows)
                 active.result.findings.extend(findings)
@@ -297,10 +315,12 @@ def _detectors(context: ScanContext) -> None:
 
 
 def _classify(context: ScanContext) -> None:
+    policy = load_policy(DEFAULT_POLICY_PATH)
     development = {node.component_id: node.dev for node in context.result.graph.nodes}
     for index, finding in enumerate(context.result.findings):
         try:
-            revised = assess(finding, dev=development.get(finding.component_id))
+            assessed = assess(finding, dev=development.get(finding.component_id), policy=policy)
+            revised = apply_confidence(assessed, policy)
         except ValueError as error:
             context.result.scan.errors[f"risk:{finding.finding_id}"] = str(error)
         else:
@@ -319,10 +339,21 @@ def _relevance(context: ScanContext) -> None:
 def _review(context: ScanContext) -> None:
     result = context.result
     injected = load_injected(context.inject_claim, result) if context.inject_claim else []
-    claims, status, trace = run_review(result, context.settings, injected)
-    result.claims.extend(claims)
-    result.agent_trace = trace
-    result.scan.llm_status = status
+    review = run_review(result, context.settings, injected)
+    result.claims.extend(review.claims)
+    result.agent_trace = review.trace
+    result.scan.llm_status = review.llm_status
+    result.risk_adjustments = review.risk_adjustments
+    result.agreement = review.agreement
+    result.proposals = review.proposals
+    policy = load_policy(DEFAULT_POLICY_PATH)
+    adjusted = apply_adjustments(result.findings, review.risk_adjustments)
+    result.findings = [apply_confidence(f, policy, review.agreement) for f in adjusted]
+
+
+def _propose(context: ScanContext) -> None:
+    result = context.result
+    result.proposals = merge_proposals(result.proposals, rule_based_proposals(result))
 
 
 def _render(run_dir: Path) -> None:
@@ -406,6 +437,7 @@ def _prepare(
     out = out.resolve()
     baseline = baseline.resolve(strict=True) if baseline is not None else None
     settings = Settings.load(use_llm=use_llm)
+    load_policy(DEFAULT_POLICY_PATH)
     commit, lock_hash, clean = UNKNOWN, UNKNOWN, False
     local: Path | str
     if candidate.is_dir():
@@ -474,7 +506,7 @@ def _scan_context(context: ScanContext, clean_commit: bool, use_llm: bool) -> Ru
     _write_model(context.out / "run.json", context.result.scan)
     for name, action in (
         ("inventory", _inventory), ("scope", _scope), ("scanners", _scanners),
-        ("detectors", _detectors), ("risk", _classify), ("relevance", _relevance),
+        ("detectors", _detectors), ("relevance", _relevance), ("risk", _classify),
     ):
         _attempt(context, name, action)
         _write_model(context.out / "run.json", context.result.scan)
@@ -483,6 +515,7 @@ def _scan_context(context: ScanContext, clean_commit: bool, use_llm: bool) -> Ru
     result.evidence = context.evidence.records()
     if use_llm or context.inject_claim is not None:
         _attempt(context, "ai", _review, optional=True)
+    _attempt(context, "remediation", _propose)
     result.scan.status = (
         ScanStatus.PARTIAL if result.scan.errors.keys() - {"ai"} else ScanStatus.COMPLETE
     )

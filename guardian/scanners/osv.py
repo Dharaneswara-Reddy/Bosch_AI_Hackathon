@@ -73,6 +73,14 @@ def _severity(vuln: dict[str, Any], groups: list[dict[str, Any]]) -> str:
     return DB_SEVERITY.get(db, UNKNOWN)
 
 
+def _cvss_vector(vuln: dict[str, Any]) -> str | None:
+    for item in vuln.get("severity") or []:
+        score = str(item.get("score", ""))
+        if str(item.get("type", "")).startswith("CVSS") and score.startswith("CVSS:"):
+            return score
+    return None
+
+
 def _fixed_versions(vuln: dict[str, Any], name: str) -> list[str]:
     fixed: list[str] = []
     for aff in vuln.get("affected", []):
@@ -93,7 +101,7 @@ def _convert(
     raw_file: str,
     raw_sha256: str,
     tool_version: str,
-) -> tuple[Finding, Evidence]:
+) -> tuple[Finding, list[Evidence]]:
     pkg = pkg_entry["package"]
     purl = _purl(pkg)
     vid = str(vuln["id"])
@@ -106,6 +114,13 @@ def _convert(
         pointer=pointer,
         sha256=raw_sha256,
         url=f"https://osv.dev/vulnerability/{vid}",
+    )
+    vector = _cvss_vector(vuln)
+    intel = (
+        [evidence.model_copy(
+            update={"evidence_id": f"{ev_id}-cvss", "pointer": f"{pointer}/severity"}
+        )]
+        if vector else []
     )
     finding = Finding(
         finding_id=finding_id("osv", purl, vid, []),
@@ -120,8 +135,10 @@ def _convert(
         fixed_versions=_fixed_versions(vuln, str(pkg["name"])),
         match_basis=MatchBasis.PURL,
         evidence_ids=[ev_id],
+        cvss_vector=vector,
+        intel_evidence_ids=[e.evidence_id for e in intel],
     )
-    return finding, evidence
+    return finding, [evidence, *intel]
 
 
 def parse_osv(
@@ -138,7 +155,7 @@ def parse_osv(
                 ev_id = f"ev-osv-{r}-{p}-{v}-{raw_sha256[:8]}"
                 f, e = _convert(vuln, entry, pointer, ev_id, raw_file, raw_sha256, tool_version)
                 findings.append(f)
-                evidence.append(e)
+                evidence.extend(e)
     if packages == 0:
         raise OsvError("no packages scanned")
     return findings, evidence

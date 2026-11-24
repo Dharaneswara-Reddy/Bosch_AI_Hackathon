@@ -2,15 +2,20 @@
 
 import hashlib
 import json
+import logging
 import os
 import shutil
+import threading
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Final
+from typing import Final, TypeVar
 from uuid import uuid4
 
 from guardian import runner
 from guardian.ai.llm import read_env_file
+from guardian.changes import ChangeSummary, compute_changes
+from guardian.decisions import DecisionLog, apply_decisions, summarize
 from guardian.fetch import (
     MANIFEST_NAME,
     FetchedFile,
@@ -20,17 +25,23 @@ from guardian.fetch import (
     parse_github_url,
     write_manifest,
 )
-from guardian.models import RunResult
+from guardian.models import FindingsArtifact, GraphArtifact, RunResult
 from guardian.prepare import generate_npm_lockfiles
 
 from .schemas import FetchSummary, ScanRecord, ScanResult
 
+logger = logging.getLogger(__name__)
+RECORD_FILE: Final = "record.json"
 SCANS: Final[dict[str, ScanRecord]] = {}
 REPO_ROOT: Final = Path(__file__).resolve().parents[3]
 FAKE_CLAIM: Final = REPO_ROOT / "tests" / "fixtures" / "fake_cve_claim.json"
 DEMO_APP: Final = REPO_ROOT / "demo" / "vulnerable-app"
 DEMO_LABEL: Final = "Built-in demo app (demo/vulnerable-app, local, no network)"
+CHANGES_FILE: Final = "changes.json"
 DEMO_FILES: Final = frozenset({"package.json", "package-lock.json", "ci.yml"})
+BASELINE_CACHE: Final = "baseline-cache"
+DEFAULT_BASELINE_TIMEOUT: Final = 600.0
+T = TypeVar("T")
 
 
 def load_root_env(path: Path = REPO_ROOT / ".env") -> None:
@@ -45,14 +56,16 @@ def ai_enabled() -> bool:
     return provider not in ("", "none") and bool(os.environ.get("GUARDIAN_LLM_API_KEY", "").strip())
 
 
-def create_record(url: str, ref: str, base: Path) -> ScanRecord:
+def create_record(url: str, ref: str, base: Path, baseline_ref: str = "") -> ScanRecord:
     owner, repo = parse_github_url(url)
     scan_id = uuid4().hex
     record = ScanRecord(
         scan_id=scan_id, repository_url=f"https://github.com/{owner}/{repo}", ref=ref,
+        baseline_ref=baseline_ref,
         created_at=datetime.now(UTC), work_dir=base / scan_id,
     )
     SCANS[scan_id] = record
+    persist(record)
     return record
 
 
@@ -61,6 +74,7 @@ def create_demo_record(base: Path) -> ScanRecord:
     record = ScanRecord(scan_id=scan_id, repository_url=DEMO_LABEL, ref="local", demo=True,
                         created_at=datetime.now(UTC), work_dir=base / scan_id)
     SCANS[scan_id] = record
+    persist(record)
     return record
 
 
@@ -79,30 +93,146 @@ def prepare_demo(repo_dir: Path) -> FetchResult:
     return result
 
 
-def _fail(record: ScanRecord, message: str) -> None:
+def persist(record: ScanRecord) -> None:
+    record.work_dir.mkdir(parents=True, exist_ok=True)
+    temp = record.work_dir / f"{RECORD_FILE}.tmp"
+    temp.write_text(record.model_dump_json(indent=2), encoding="utf-8")
+    os.replace(temp, record.work_dir / RECORD_FILE)
+
+
+def set_stage(record: ScanRecord, stage: str) -> None:
+    record.stage = stage
+    persist(record)
+
+
+def load_records(base: Path) -> None:
+    """Reload persisted scans; one still marked running died with the previous server."""
+    for path in sorted(base.glob(f"*/{RECORD_FILE}")):
+        try:
+            record = ScanRecord.model_validate(
+                {**json.loads(path.read_bytes()), "work_dir": path.parent})
+        except ValueError:
+            logger.warning("Skipping unreadable scan record %s", path)
+            continue
+        if record.status == "running":
+            fail(record, "interrupted by server restart")
+        SCANS[record.scan_id] = record
+
+
+def fail(record: ScanRecord, message: str) -> None:
     record.status = "failed"
     record.error = message
-    record.stage = "done"
+    set_stage(record, "done")
 
 
 def _apply_result(record: ScanRecord, result: RunResult) -> None:
     record.status = result.scan.status.value  # type: ignore[assignment]
     record.llm_status = result.scan.llm_status.value
     record.errors = {**record.errors, **result.scan.errors}
-    record.stage = "done"
+    set_stage(record, "done")
 
 
 def _fetch_and_prepare(record: ScanRecord, repo_dir: Path, token: str | None) -> bool:
-    record.stage = "fetching"
+    set_stage(record, "fetching")
     fetched = fetch_repo_files(record.repository_url, record.ref, repo_dir, token)
     record.commit_sha, record.ref = fetched.commit_sha, fetched.ref
-    record.stage = "preparing"
+    set_stage(record, "preparing")
     prepared = generate_npm_lockfiles(fetched)
     record.errors.update(prepared.errors)
     if not prepared.files:
-        _fail(record, "No dependency manifests or lockfiles found in the repository")
+        fail(record, "No dependency manifests or lockfiles found in the repository")
         return False
     return True
+
+
+def _baseline_timeout() -> float:
+    try:
+        return float(os.environ.get("GUARDIAN_BASELINE_TIMEOUT", DEFAULT_BASELINE_TIMEOUT))
+    except ValueError:
+        return DEFAULT_BASELINE_TIMEOUT
+
+
+def _with_timeout(work: Callable[[], T], seconds: float) -> T:
+    """Run ``work`` in a daemon thread; a stuck scanner cannot be killed, only abandoned."""
+    outcome: list[T] = []
+    failure: list[BaseException] = []
+
+    def target() -> None:
+        try:
+            outcome.append(work())
+        except BaseException as error:  # noqa: BLE001 - re-raised in the caller's thread
+            failure.append(error)
+
+    thread = threading.Thread(target=target, daemon=True)
+    thread.start()
+    thread.join(seconds)
+    if thread.is_alive():
+        raise TimeoutError(f"Baseline scan timed out after {seconds:g}s")
+    if failure:
+        raise failure[0]
+    return outcome[0]
+
+
+def _cache_dir(record: ScanRecord, commit_sha: str) -> Path:
+    key = hashlib.sha256(record.repository_url.lower().encode("utf-8")).hexdigest()[:16]
+    return record.work_dir.parent / BASELINE_CACHE / f"{key}-{commit_sha}"
+
+
+def _baseline_out(record: ScanRecord, base_dir: Path, commit_sha: str) -> Path:
+    """Return the baseline scan output, reusing a cached scan of the same commit."""
+    out, cached = base_dir / "out", _cache_dir(record, commit_sha)
+    if (cached / "run.json").is_file():
+        shutil.copytree(cached, out)
+        return out
+    runner.scan(base_dir / "repo", out, use_llm=False)
+    staging = cached.with_name(f"{cached.name}.{uuid4().hex}.tmp")
+    cached.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(out, staging)
+    if cached.exists():
+        shutil.rmtree(staging)
+    else:
+        staging.replace(cached)
+    return out
+
+
+def _scan_baseline(record: ScanRecord, token: str | None) -> tuple[Path, str] | None:
+    set_stage(record, "baseline")
+    base_dir = record.work_dir / "baseline"
+    try:
+        fetched = fetch_repo_files(record.repository_url, record.baseline_ref,
+                                   base_dir / "repo", token)
+        if not generate_npm_lockfiles(fetched).files:
+            raise FetchError(f"No dependency manifests found at baseline '{record.baseline_ref}'")
+        out = _with_timeout(
+            lambda: _baseline_out(record, base_dir, fetched.commit_sha), _baseline_timeout(),
+        )
+    except Exception as error:  # noqa: BLE001 - the main scan stays useful without a baseline
+        record.errors["baseline"] = f"{type(error).__name__}: {error}"
+        return None
+    return out, fetched.commit_sha
+
+
+def _read_artifacts(out: Path) -> tuple[GraphArtifact, FindingsArtifact]:
+    return (
+        GraphArtifact.model_validate_json((out / "graph.json").read_text(encoding="utf-8")),
+        FindingsArtifact.model_validate_json((out / "findings.json").read_text(encoding="utf-8")),
+    )
+
+
+def _write_changes(record: ScanRecord, baseline_out: Path, baseline_commit: str) -> None:
+    out = record.work_dir / "out"
+    old_graph, old_findings = _read_artifacts(baseline_out)
+    new_graph, new_findings = _read_artifacts(out)
+    changes = compute_changes(old_graph, new_graph, old_findings.findings, new_findings.findings,
+                              record.baseline_ref, baseline_commit)
+    (out / CHANGES_FILE).write_text(changes.model_dump_json(indent=2), encoding="utf-8")
+
+
+def _record_changes(record: ScanRecord, baseline_out: Path, baseline_commit: str) -> None:
+    try:
+        _write_changes(record, baseline_out, baseline_commit)
+    except (OSError, ValueError) as error:
+        record.errors["baseline"] = f"Could not compare with the baseline: {error}"
 
 
 def run_pipeline(record: ScanRecord, token: str | None, inject_fake_claim: bool = False) -> None:
@@ -110,18 +240,22 @@ def run_pipeline(record: ScanRecord, token: str | None, inject_fake_claim: bool 
     out_dir = record.work_dir / "out"
     try:
         if record.demo:
-            record.stage = "preparing"
+            set_stage(record, "preparing")
             record.commit_sha = prepare_demo(repo_dir).commit_sha
         elif not _fetch_and_prepare(record, repo_dir, token):
             return
-        record.stage = "scanning"
+        baseline = _scan_baseline(record, token) if record.baseline_ref else None
+        set_stage(record, "scanning")
         inject = FAKE_CLAIM if inject_fake_claim else None
-        result = runner.scan(repo_dir, out_dir, use_llm=ai_enabled(), inject_claim=inject)
+        result = runner.scan(repo_dir, out_dir, baseline=baseline[0] if baseline else None,
+                             use_llm=ai_enabled(), inject_claim=inject)
+        if baseline:
+            _record_changes(record, *baseline)
         _apply_result(record, result)
     except FetchError as error:
-        _fail(record, str(error))
+        fail(record, str(error))
     except Exception as error:  # noqa: BLE001 - worker boundary: report, never lose the failure
-        _fail(record, f"{type(error).__name__}: {error}")
+        fail(record, f"{type(error).__name__}: {error}")
 
 
 def _fetch_summary(record: ScanRecord) -> FetchSummary:
@@ -141,11 +275,18 @@ def load_result(record: ScanRecord) -> ScanResult:
         "coverage": json.loads((out / "coverage.json").read_text(encoding="utf-8")),
         **json.loads((out / "findings.json").read_text(encoding="utf-8")),
     })
+    decisions = DecisionLog(out).latest()
+    findings = apply_decisions(run.findings, list(decisions.values()))
     counts: dict[str, int] = {}
-    for finding in run.findings:
+    for finding in findings:
         counts[finding.risk_level.value] = counts.get(finding.risk_level.value, 0) + 1
+    changes_path = out / CHANGES_FILE
+    changes = (ChangeSummary.model_validate_json(changes_path.read_text(encoding="utf-8"))
+               if changes_path.is_file() else None)
     return ScanResult(
-        scan=run.scan, findings=run.findings, evidence=run.evidence, coverage=run.coverage,
+        scan=run.scan, findings=findings, evidence=run.evidence, coverage=run.coverage,
         counts_by_risk=counts, fetch=_fetch_summary(record), claims=run.claims,
-        agent_trace=run.agent_trace,
+        agent_trace=run.agent_trace, risk_adjustments=run.risk_adjustments,
+        agreement=run.agreement, review_summary=summarize(run.findings, decisions),
+        changes=changes,
     )

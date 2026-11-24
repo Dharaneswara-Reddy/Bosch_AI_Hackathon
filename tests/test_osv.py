@@ -7,6 +7,7 @@ from unittest.mock import patch
 import pytest
 
 from guardian.models import FindingKind, MatchBasis, finding_id
+from guardian.scanners import osv
 from guardian.scanners.osv import OSV_IMAGE, OsvError, parse_osv, run_osv
 
 FIXTURE = Path(__file__).parent / "fixtures" / "osv.sample.json"
@@ -38,7 +39,9 @@ def _synthetic(
 def test_one_finding_per_package_vulnerability(raw: dict[str, Any]) -> None:
     findings, evidence = parse_osv(raw, "raw/osv.json", SHA, "2.7.1")
     assert len(findings) == 8
-    assert len(evidence) == 8
+    with_vector = [f for f in findings if f.cvss_vector]
+    assert len(evidence) == 8 + len(with_vector)
+    assert {i for f in findings for i in f.intel_evidence_ids} <= {e.evidence_id for e in evidence}
 
 
 def test_purl_taken_from_package(raw: dict[str, Any]) -> None:
@@ -177,3 +180,18 @@ def test_run_osv_exit_two_raises(tmp_path: Path) -> None:
     with patch("guardian.scanners.osv.subprocess.run", return_value=_completed(2, err="boom")):
         with pytest.raises(OsvError, match="boom"):
             run_osv(tmp_path / "s.cdx.json", tmp_path / "o")
+
+
+def test_osv_cvss_vector_is_kept_without_inventing_a_score() -> None:
+    vuln = {
+        "id": "GHSA-aaaa-bbbb-cccc",
+        "severity": [
+            {"type": "CVSS_V3", "score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"},
+        ],
+    }
+    entry = {"package": {"name": "lib", "version": "1", "ecosystem": "npm"}, "groups": []}
+    finding, records = osv._convert(vuln, entry, "/p", "ev-1", "raw/osv.json", "a" * 64, "2.7.1")
+    assert [(r.evidence_id, r.pointer) for r in records[1:]] == [("ev-1-cvss", "/p/severity")]
+    assert finding.intel_evidence_ids == ["ev-1-cvss"]
+    assert finding.cvss_vector == "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+    assert finding.cvss_score is None

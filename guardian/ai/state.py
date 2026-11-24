@@ -8,23 +8,20 @@ facts live in ``ReviewContext`` (tool output) and are copied into evidence packs
 from __future__ import annotations
 
 import operator
-from enum import StrEnum
 from typing import Annotated, Any, TypedDict
 
 from pydantic import BaseModel
 
-from guardian.models import AgentClaim, AgentTrace, Relevance
+from guardian.models import (
+    AgentClaim,
+    AgentTrace,
+    FixAction,
+    Relevance,
+    RemediationProposal,
+    RiskAdjustment,
+)
 
-
-class FixAction(StrEnum):
-    UPGRADE = "upgrade"
-    UPGRADE_PARENT = "upgrade_parent"
-    PIN_VERSION = "pin_version"
-    REMOVE_DEPENDENCY = "remove_dependency"
-    REPLACE_DEPENDENCY = "replace_dependency"
-    PIN_ACTION_SHA = "pin_action_sha"
-    PIN_IMAGE_DIGEST = "pin_image_digest"
-    ESCALATE_REVIEW = "escalate_review"
+__all__ = ["FixAction", "RemediationProposal"]
 
 
 class EvidencePack(BaseModel):
@@ -53,6 +50,15 @@ class EvidencePack(BaseModel):
     evidence_ids: list[str]
 
 
+class PackageGroup(BaseModel):
+    """All findings of one package (platform builds merged): the unit of one parallel branch."""
+
+    group_id: str
+    package: str
+    top_risk: str
+    finding_ids: list[str]
+
+
 class RemediationCandidate(BaseModel):
     """Fix options computed by code; the planner may only choose among these."""
 
@@ -64,26 +70,25 @@ class RemediationCandidate(BaseModel):
     evidence_ids: list[str]
 
 
-class RemediationProposal(BaseModel):
-    proposal_id: str
-    finding_id: str
-    action: FixAction
-    target_version: str | None
-    rationale: str
-    rollback: str
-    breaking_change_risk: str
-    evidence_ids: list[str]
-    requires_human_approval: bool = True
-    validated: bool = False
-    rejected_reason: str | None = None
+class BranchInput(TypedDict):
+    """What one parallel branch receives from the fan-out: one package group and its packs."""
+
+    group: PackageGroup
+    group_packs: list[EvidencePack]
+    project: str
 
 
 class GuardianState(TypedDict, total=False):
-    """Graph state. ``trace`` and ``errors`` accumulate; every other key is replaced."""
+    """Graph state. Branch outputs (``pending``, ``adjustments``, ``trace``, ``errors``)
+    accumulate through reducers when the branches fan in; every other key is replaced."""
 
+    groups: list[PackageGroup]
     packs: list[EvidencePack]
     project_text: str
-    pending: list[AgentClaim]
+    pending: Annotated[list[AgentClaim], operator.add]
+    adjustments: Annotated[list[RiskAdjustment], operator.add]
+    reviewed_adjustments: list[RiskAdjustment]
+    agreement: dict[str, bool]
     claims: list[AgentClaim]
     candidates: list[RemediationCandidate]
     proposals: list[RemediationProposal]

@@ -5,6 +5,7 @@ from pathlib import Path
 
 from guardian.detectors import DETECTORS, typosquat, unverified_source
 from guardian.models import CoverageStatus, Finding, FindingKind
+from guardian.policy import RiskPolicy
 from guardian.risk import assess
 
 DEMO = Path(__file__).resolve().parents[1] / "demo" / "vulnerable-app"
@@ -89,8 +90,8 @@ def test_detector_is_registered_and_risk_rule_keeps_synthetic_label() -> None:
         anomaly_type="unverified_install_script",
         risk_note="SYNTHETIC fixture",
     )
-    assessed = assess(finding, dev=True)
+    assessed = assess(finding, dev=True, policy=RiskPolicy())
     assert assessed.risk_rule_id == "R-AN-1"
     assert assessed.risk_note is not None
     assert assessed.risk_note.startswith("SYNTHETIC fixture")
-    assert "development dependency" in assessed.risk_note
+    assert assessed.risk_level == "high"

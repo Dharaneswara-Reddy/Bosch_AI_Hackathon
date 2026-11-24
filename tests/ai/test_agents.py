@@ -78,23 +78,17 @@ def _full_llm() -> RoutingLLM:
     )
 
 
-def test_agents_run_in_order_and_hand_off_evidence() -> None:
+def test_branches_run_in_parallel_then_the_tail_runs_once_in_order() -> None:
     llm = _full_llm()
     result = run_ai_review(make_context(), llm)
     assert result.llm_status == LlmStatus.OK
-    assert llm.agents_called() == [
-        "vuln_analyst",
-        "change_analyst",
-        "risk_critic",
-        "remediation_planner",
-        "report_writer",
-    ]
+    called = llm.agents_called()
+    assert sorted(called[:4]) == ["change_analyst", "risk_analyst", "risk_analyst", "vuln_analyst"]
+    assert called[4:] == ["risk_critic", "remediation_planner", "report_writer"]
     agents = [t.agent for t in result.trace]
-    assert agents == [
-        "triage",
-        "relevance",
-        "vuln_analyst",
-        "change_analyst",
+    assert agents[:2] == ["triage", "relevance"]
+    assert sorted(agents[2:6]) == ["change_analyst", "risk_analyst", "risk_analyst", "vuln_analyst"]
+    assert agents[6:] == [
         "evidence_validator",
         "risk_critic",
         "remediation_candidates",
@@ -102,7 +96,8 @@ def test_agents_run_in_order_and_hand_off_evidence() -> None:
         "report_writer",
     ]
     assert result.trace[0].produced == ["pack-f-jwt", "pack-f-leftpad"]
-    assert "pack-f-jwt" in result.trace[2].consumed
+    vuln = next(t for t in result.trace if t.agent == "vuln_analyst")
+    assert vuln.consumed == ["pack-f-jwt"]
 
 
 def test_analysts_only_see_their_own_evidence_packs() -> None:
@@ -198,7 +193,8 @@ def test_remediation_proposals_are_checked_against_code_computed_options() -> No
     assert good.validated and good.requires_human_approval and good.action == FixAction.UPGRADE
     assert not invented.validated
     assert "not a scanner-reported fix" in (invented.rejected_reason or "")
-    assert removal.validated
+    assert not removal.validated
+    assert "no remediation candidate" in (removal.rejected_reason or "")
     fix_claims = [c for c in result.claims if c.step == "remediation_planner"]
     assert len(fix_claims) == 3
     assert all("Requires human approval" in c.text for c in fix_claims)
@@ -219,6 +215,7 @@ def test_graph_diagram_lists_every_agent() -> None:
         "relevance",
         "vuln_analyst",
         "change_analyst",
+        "risk_analyst",
         "evidence_validator",
         "analyst_revision",
         "risk_critic",
@@ -273,3 +270,23 @@ def test_triage_ranks_by_relevance_before_risk() -> None:
     )
     ctx = ReviewContext.build([low, relevant], base.evidence.values(), base.components.values())
     assert [f.finding_id for f in ctx.top_findings(2)] == ["f-leftpad", "f-jwt"]
+
+
+def _many_vulns(count: int) -> ReviewContext:
+    base = make_context()
+    findings = list(base.findings.values())
+    jwt = base.findings["f-jwt"]
+    findings += [jwt.model_copy(update={"finding_id": f"f-jwt-{i}"}) for i in range(count - 1)]
+    return ReviewContext.build(
+        findings, list(base.evidence.values()), list(base.components.values())
+    )
+
+
+def test_vuln_analyst_sends_evidence_packs_in_bounded_batches() -> None:
+    llm = RoutingLLM(vuln_analyst=_claims(JWT_CLAIM))
+    result = run_ai_review(_many_vulns(5), llm, pack_batch=2)
+    prompts = [u for a, _, u in llm.calls if a == "vuln_analyst"]
+    assert len(prompts) == 3
+    assert [p.count('"finding_id"') for p in prompts] == [2, 2, 1]
+    analyst = [t for t in result.trace if t.agent == "vuln_analyst"]
+    assert len(analyst) == 1 and len(analyst[0].consumed) == 5

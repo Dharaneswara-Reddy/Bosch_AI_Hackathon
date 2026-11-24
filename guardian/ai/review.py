@@ -3,13 +3,31 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
-from guardian.ai.context import ReviewContext
-from guardian.ai.graph import load_injected_claims, run_ai_review
-from guardian.ai.llm import build_client
-from guardian.config import Settings
-from guardian.models import AgentClaim, AgentTrace, LlmStatus, RunResult
+from guardian.ai.agents import PACK_BATCH
+from guardian.ai.context import RISK_ORDER, ReviewContext
+from guardian.ai.graph import AIReviewResult, load_injected_claims, run_ai_review
+from guardian.ai.llm import (
+    GROQ_DEFAULT_MODEL,
+    MAX_TOKENS,
+    RATE_LIMIT_RETRIES,
+    LLMClient,
+    build_client,
+    read_env_file,
+    with_fallbacks,
+)
+from guardian.config import (
+    AI_CONCURRENCY,
+    AI_MAX_GROUPS,
+    AI_MIN_RISK,
+    AI_PLANNER_MAX,
+    AI_PLANNER_TIMEOUT_S,
+    Settings,
+)
+from guardian.models import AgentClaim, RunResult
 
 
 def review_context_from_result(result: RunResult) -> ReviewContext:
@@ -20,21 +38,72 @@ def load_injected(path: Path, result: RunResult) -> list[AgentClaim]:
     return load_injected_claims(path, review_context_from_result(result))
 
 
+def review_client(settings: Settings, env: Mapping[str, str]) -> LLMClient:
+    """The primary provider from settings, followed by the ``GUARDIAN_LLM_FALLBACKS`` chain."""
+    primary = build_client(
+        settings.provider,
+        settings.model,
+        settings.api_key.get_secret_value(),
+        env.get("GUARDIAN_LLM_BASE_URL", ""),
+        int(env.get("GUARDIAN_LLM_RATE_LIMIT_RETRIES", RATE_LIMIT_RETRIES)),
+        int(env.get("GUARDIAN_LLM_MAX_TOKENS", MAX_TOKENS)),
+    )
+    default = GROQ_DEFAULT_MODEL if settings.provider == "groq" else ""
+    label = f"{settings.provider}:{settings.model or default}"
+    return with_fallbacks(primary, label, env)
+
+
+def _positive_int(env: Mapping[str, str], name: str, default: int) -> int:
+    raw = env.get(name, "").strip()
+    try:
+        value = int(raw) if raw else default
+    except ValueError:
+        value = 0
+    if value < 1:
+        raise ValueError(f"{name} must be a whole number of at least 1, not '{raw}'.")
+    return value
+
+
+def _positive_float(env: Mapping[str, str], name: str, default: float) -> float:
+    raw = env.get(name, "").strip()
+    try:
+        value = float(raw) if raw else default
+    except ValueError:
+        value = 0.0
+    if value <= 0:
+        raise ValueError(f"{name} must be a number of seconds above 0, not '{raw}'.")
+    return value
+
+
+def review_options(env: Mapping[str, str]) -> dict[str, Any]:
+    """Policy and concurrency settings for one review; a bad value fails at startup."""
+    min_risk = env.get("GUARDIAN_AI_MIN_RISK", "").strip().lower() or AI_MIN_RISK
+    if min_risk not in RISK_ORDER:
+        raise ValueError(
+            f"GUARDIAN_AI_MIN_RISK must be one of {', '.join(RISK_ORDER)}, not '{min_risk}'."
+        )
+    return {
+        "min_risk": min_risk,
+        "max_groups": _positive_int(env, "GUARDIAN_AI_MAX_GROUPS", AI_MAX_GROUPS),
+        "pack_batch": _positive_int(env, "GUARDIAN_LLM_PACK_BATCH", PACK_BATCH),
+        "concurrency": _positive_int(env, "GUARDIAN_LLM_CONCURRENCY", AI_CONCURRENCY),
+        "planner_timeout": _positive_float(
+            env, "GUARDIAN_LLM_PLANNER_TIMEOUT", AI_PLANNER_TIMEOUT_S
+        ),
+        "planner_max": _positive_int(env, "GUARDIAN_AI_PLANNER_MAX", AI_PLANNER_MAX),
+    }
+
+
 def run_review(
     result: RunResult,
     settings: Settings,
     injected: list[AgentClaim],
-) -> tuple[list[AgentClaim], LlmStatus, list[AgentTrace]]:
-    client = build_client(
-        settings.provider,
-        settings.model,
-        settings.api_key.get_secret_value(),
-        os.environ.get("GUARDIAN_LLM_BASE_URL", ""),
-    )
-    review = run_ai_review(
+) -> AIReviewResult:
+    env = {**read_env_file(Path(".env")), **os.environ}
+    return run_ai_review(
         review_context_from_result(result),
-        client,
+        review_client(settings, env),
         injected=injected,
         timeout=float(settings.timeout_s),
+        **review_options(env),
     )
-    return review.claims, review.llm_status, review.trace

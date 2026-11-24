@@ -1,6 +1,7 @@
 """Render local static reports from validated scan artifacts."""
 
 import re
+from collections import Counter
 from html import escape
 from itertools import islice
 from pathlib import Path
@@ -10,7 +11,9 @@ from urllib.parse import quote
 from jinja2 import Environment, FileSystemLoader
 from pydantic import BaseModel
 
+from guardian.decisions import DecisionLog, apply_decisions
 from guardian.models import (
+    AgentTrace,
     CoverageArtifact,
     Evidence,
     Finding,
@@ -21,6 +24,7 @@ from guardian.models import (
     Scan,
 )
 from guardian.relevance import rank
+from guardian.report.final import build_report, load_fixes
 
 Artifact = TypeVar("Artifact", bound=BaseModel)
 RISK_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3}
@@ -29,8 +33,8 @@ LIMITATIONS = (
     "Reachability is a static import search of the application's own source; it does not "
     "prove that a vulnerable function is called, and no hit is not proof of safety.",
     "Exploitation data (CISA KEV, EPSS) is shown only when the scanner output includes it.",
-    "Fix proposals are not applied or tested here; each needs human approval and a sandbox "
-    "build, test and rescan.",
+    "Fix proposals are applied only after human approval, in a sandbox copy; a fix without a "
+    "passing test run is verified by build and rescan only.",
 )
 
 
@@ -74,7 +78,9 @@ def _evidence_details(root: Path, evidence: list[Evidence]) -> dict[str, dict[st
         path = _evidence_path(root, item)
         href = quote(path.relative_to(root).as_posix()) if path else None
         details[item.evidence_id] = {
-            "item": item, "href": href, "diff": _diff_excerpt(path, item.pointer),
+            "item": item,
+            "href": href,
+            "diff": _diff_excerpt(path, item.pointer),
         }
     return details
 
@@ -93,17 +99,61 @@ def _entry_paths(findings: list[Finding], graph: GraphArtifact) -> list[dict[str
     rows: list[dict[str, object]] = []
     for finding in findings:
         path = finding.dependency_path
-        hops = [{"label": f"{nodes[c].name}@{nodes[c].version}" if c in nodes else c,
-                 "edge": sources.get((c, path[i + 1]), "UNKNOWN") if i + 1 < len(path) else None}
-                for i, c in enumerate(path)]
+        hops = [
+            {
+                "label": f"{nodes[c].name}@{nodes[c].version}" if c in nodes else c,
+                "edge": sources.get((c, path[i + 1]), "UNKNOWN") if i + 1 < len(path) else None,
+            }
+            for i, c in enumerate(path)
+        ]
         introduced = finding.relevance.introduced_by if finding.relevance else None
         rows.append({"finding": finding, "hops": hops, "introduced_by": introduced})
     return rows
 
 
+def _reviewed(trace: list[AgentTrace]) -> set[str]:
+    """Finding IDs that triage handed to the AI (pack IDs are ``pack-<finding_id>``)."""
+    return {
+        pack.removeprefix("pack-")
+        for step in trace
+        if step.agent == "triage"
+        for pack in step.produced
+    }
+
+
+def _groups(
+    findings: list[Finding], graph: GraphArtifact, reviewed: set[str]
+) -> list[dict[str, object]]:
+    """One row per advisory and package name, so platform builds of one gem share a row."""
+    nodes = {node.component_id: node for node in graph.nodes}
+    groups: dict[tuple[str, str], dict[str, object]] = {}
+    for finding in findings:
+        node = nodes.get(finding.component_id)
+        name = node.name if node else finding.purl
+        group = groups.setdefault(
+            (finding.advisory_id or finding.finding_id, name),
+            {
+                "finding": finding,
+                "name": name,
+                "versions": [],
+                "count": 0,
+                "ai": False,
+            },
+        )
+        versions = group["versions"]
+        if node and isinstance(versions, list) and node.version not in versions:
+            versions.append(node.version)
+        group["count"] = int(str(group["count"])) + 1
+        group["ai"] = bool(group["ai"]) or finding.finding_id in reviewed
+    return list(groups.values())
+
+
 def _unknowns(scan: Scan, findings: list[Finding]) -> list[str]:
-    items = [f"{f.advisory_id or f.purl}: relevance unknown ({f.relevance.summary})"
-             for f in findings if f.relevance and f.relevance.verdict == "unknown"]
+    items = [
+        f"{f.advisory_id or f.purl}: relevance unknown ({f.relevance.summary})"
+        for f in findings
+        if f.relevance and f.relevance.verdict == "unknown"
+    ]
     no_path = [f.advisory_id or f.purl for f in findings if not f.dependency_path]
     if no_path:
         items.append(f"Dependency path could not be resolved for: {', '.join(no_path)}")
@@ -111,8 +161,10 @@ def _unknowns(scan: Scan, findings: list[Finding]) -> list[str]:
         1 for f in findings if f.relevance and f.relevance.reachability == "unknown"
     )
     if unknown_reach:
-        items.append(f"Reachability unknown for {unknown_reach} findings: application source "
-                     "code was not available.")
+        items.append(
+            f"Reachability unknown for {unknown_reach} findings: application source "
+            "code was not available."
+        )
     if scan.llm_status != LlmStatus.OK:
         items.append(f"AI review status is {scan.llm_status}: AI explanations may be missing.")
     items += [f"Stage {stage} reported: {issue}" for stage, issue in scan.errors.items()]
@@ -129,28 +181,47 @@ def render(run_dir: Path) -> None:
     environment = Environment(
         loader=FileSystemLoader(Path(__file__).with_name("templates")),
         autoescape=lambda name: bool(name and name.endswith(".html.j2")),
-        trim_blocks=True, lstrip_blocks=True,
+        trim_blocks=True,
+        lstrip_blocks=True,
     )
     environment.filters["md"] = _markdown
-    ranked = _ranked(artifacts.findings)
+    decisions = DecisionLog(root).history()
+    findings = apply_decisions(artifacts.findings, decisions)
+    ranked = _ranked(findings)
     analysis = [item for item in artifacts.claims if item.step != FIX_STEP]
+    reviewed = _reviewed(artifacts.agent_trace)
+    groups = _groups(ranked, graph, reviewed)
     data = {
         "scan": scan,
         "coverage": coverage,
         "components": {item.component_id: item for item in graph.nodes},
         "findings": ranked,
-        "suspicious": [item for item in artifacts.findings
-                       if item.kind in (FindingKind.ANOMALY, FindingKind.MALICIOUS)],
-        "entries": _entry_paths(ranked, graph),
+        "groups": groups,
+        "advisory_count": len({f.advisory_id or f.finding_id for f in ranked}),
+        "risk_counts": Counter(str(f.risk_level) for f in ranked),
+        "reviewed_count": len(reviewed),
+        "relevance_known": any(f.relevance and f.relevance.verdict != "unknown" for f in ranked),
+        "suspicious": [
+            item
+            for item in findings
+            if item.kind in (FindingKind.ANOMALY, FindingKind.MALICIOUS)
+        ],
+        "entries": _entry_paths([group["finding"] for group in groups], graph),
         "evidence": _evidence_details(root, artifacts.evidence),
         "accepted": [item for item in analysis if item.validated and item.kind == "evidence"],
         "inferences": [item for item in analysis if item.validated and item.kind == "inference"],
         "rejected": [item for item in analysis if not item.validated],
         "fixes": [item for item in artifacts.claims if item.step == FIX_STEP],
+        "risk_adjustments": artifacts.risk_adjustments,
         "trace": artifacts.agent_trace,
         "unknowns": _unknowns(scan, ranked),
+        "human_decisions": decisions,
         "has_sbom": (root / "sbom.cdx.json").is_file(),
     }
+    final = build_report(scan, graph, artifacts, ranked, decisions, load_fixes(root.parent))
+    (root / "report.json").write_text(final.model_dump_json(indent=2) + "\n", encoding="utf-8")
+    data["final"] = final
+    data["final_findings"] = {item.finding_id: item for item in final.findings}
     for name in ("report.html", "report.md"):
         text = environment.get_template(f"{name}.j2").render(**data)
         (root / name).write_text(text + "\n", encoding="utf-8")

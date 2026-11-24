@@ -110,6 +110,18 @@
           ],
           "default": null,
           "title": "Error"
+        },
+        "provider": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Provider"
         }
       },
       "required": [
@@ -117,6 +129,15 @@
       ],
       "title": "AgentTrace",
       "type": "object"
+    },
+    "Automatable": {
+      "enum": [
+        "yes",
+        "no",
+        "unknown"
+      ],
+      "title": "Automatable",
+      "type": "string"
     },
     "ClaimKind": {
       "enum": [
@@ -202,6 +223,25 @@
       ],
       "title": "Evidence",
       "type": "object"
+    },
+    "Exploitation": {
+      "enum": [
+        "active",
+        "likely",
+        "none",
+        "unknown"
+      ],
+      "title": "Exploitation",
+      "type": "string"
+    },
+    "Exposure": {
+      "enum": [
+        "open",
+        "limited",
+        "small"
+      ],
+      "title": "Exposure",
+      "type": "string"
     },
     "Finding": {
       "properties": {
@@ -372,6 +412,252 @@
             }
           ],
           "default": null
+        },
+        "cvss_vector": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cvss Vector"
+        },
+        "cvss_score": {
+          "anyOf": [
+            {
+              "maximum": 10,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cvss Score"
+        },
+        "epss": {
+          "anyOf": [
+            {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Epss"
+        },
+        "epss_percentile": {
+          "anyOf": [
+            {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Epss Percentile"
+        },
+        "epss_date": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Epss Date"
+        },
+        "known_exploited": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Known Exploited"
+        },
+        "intel_evidence_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Intel Evidence Ids",
+          "type": "array"
+        },
+        "ssvc_decision": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SsvcDecision"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "exploitation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Exploitation"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "exposure": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Exposure"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "automatable": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Automatable"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "technical_impact": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TechnicalImpact"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "risk_score": {
+          "anyOf": [
+            {
+              "maximum": 100,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Risk Score"
+        },
+        "risk_reasons": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Risk Reasons",
+          "type": "array"
+        },
+        "confidence_score": {
+          "anyOf": [
+            {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Confidence Score"
+        },
+        "review_required": {
+          "default": false,
+          "title": "Review Required",
+          "type": "boolean"
+        },
+        "review_reasons": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Review Reasons",
+          "type": "array"
+        },
+        "engine_risk_level": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RiskLevel"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "ai_adjusted": {
+          "default": false,
+          "title": "Ai Adjusted",
+          "type": "boolean"
+        },
+        "ai_adjustment_reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ai Adjustment Reason"
+        },
+        "ai_adjustment_evidence_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Ai Adjustment Evidence Ids",
+          "type": "array"
+        },
+        "human_decision": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Human Decision"
+        },
+        "human_note": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Human Note"
         }
       },
       "required": [
@@ -399,6 +685,20 @@
         "under_investigation"
       ],
       "title": "FindingState",
+      "type": "string"
+    },
+    "FixAction": {
+      "enum": [
+        "upgrade",
+        "upgrade_parent",
+        "pin_version",
+        "remove_dependency",
+        "replace_dependency",
+        "pin_action_sha",
+        "pin_image_digest",
+        "escalate_review"
+      ],
+      "title": "FixAction",
       "type": "string"
     },
     "MatchBasis": {
@@ -506,6 +806,167 @@
       "title": "RelevanceVerdict",
       "type": "string"
     },
+    "RemediationProposal": {
+      "properties": {
+        "proposal_id": {
+          "title": "Proposal Id",
+          "type": "string"
+        },
+        "finding_id": {
+          "title": "Finding Id",
+          "type": "string"
+        },
+        "action": {
+          "$ref": "#/$defs/FixAction"
+        },
+        "target_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Target Version"
+        },
+        "rationale": {
+          "title": "Rationale",
+          "type": "string"
+        },
+        "rollback": {
+          "title": "Rollback",
+          "type": "string"
+        },
+        "breaking_change_risk": {
+          "title": "Breaking Change Risk",
+          "type": "string"
+        },
+        "evidence_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence Ids",
+          "type": "array"
+        },
+        "requires_human_approval": {
+          "default": true,
+          "title": "Requires Human Approval",
+          "type": "boolean"
+        },
+        "validated": {
+          "default": false,
+          "title": "Validated",
+          "type": "boolean"
+        },
+        "rejected_reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rejected Reason"
+        }
+      },
+      "required": [
+        "proposal_id",
+        "finding_id",
+        "action",
+        "target_version",
+        "rationale",
+        "rollback",
+        "breaking_change_risk",
+        "evidence_ids"
+      ],
+      "title": "RemediationProposal",
+      "type": "object"
+    },
+    "RiskAdjustment": {
+      "additionalProperties": false,
+      "description": "The risk analyst's proposed one-level change, kept with its verdict and never merged.",
+      "properties": {
+        "finding_id": {
+          "title": "Finding Id",
+          "type": "string"
+        },
+        "from_level": {
+          "enum": [
+            "critical",
+            "high",
+            "medium",
+            "low"
+          ],
+          "title": "From Level",
+          "type": "string"
+        },
+        "to_level": {
+          "enum": [
+            "critical",
+            "high",
+            "medium",
+            "low"
+          ],
+          "title": "To Level",
+          "type": "string"
+        },
+        "direction": {
+          "enum": [
+            "raise",
+            "lower"
+          ],
+          "title": "Direction",
+          "type": "string"
+        },
+        "reason": {
+          "maxLength": 300,
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string"
+        },
+        "evidence_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 20,
+          "title": "Evidence Ids",
+          "type": "array"
+        },
+        "status": {
+          "default": "accepted",
+          "enum": [
+            "accepted",
+            "rejected"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "rejected_reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rejected Reason"
+        }
+      },
+      "required": [
+        "finding_id",
+        "from_level",
+        "to_level",
+        "direction",
+        "reason"
+      ],
+      "title": "RiskAdjustment",
+      "type": "object"
+    },
     "RiskLevel": {
       "enum": [
         "critical",
@@ -515,6 +976,24 @@
         "unknown"
       ],
       "title": "RiskLevel",
+      "type": "string"
+    },
+    "SsvcDecision": {
+      "enum": [
+        "act",
+        "attend",
+        "track_star",
+        "track"
+      ],
+      "title": "SsvcDecision",
+      "type": "string"
+    },
+    "TechnicalImpact": {
+      "enum": [
+        "total",
+        "partial"
+      ],
+      "title": "TechnicalImpact",
       "type": "string"
     }
   },
@@ -545,6 +1024,27 @@
         "$ref": "#/$defs/AgentTrace"
       },
       "title": "Agent Trace",
+      "type": "array"
+    },
+    "risk_adjustments": {
+      "items": {
+        "$ref": "#/$defs/RiskAdjustment"
+      },
+      "title": "Risk Adjustments",
+      "type": "array"
+    },
+    "agreement": {
+      "additionalProperties": {
+        "type": "boolean"
+      },
+      "title": "Agreement",
+      "type": "object"
+    },
+    "proposals": {
+      "items": {
+        "$ref": "#/$defs/RemediationProposal"
+      },
+      "title": "Proposals",
       "type": "array"
     }
   },

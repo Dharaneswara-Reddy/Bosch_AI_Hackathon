@@ -1,18 +1,20 @@
 """Triage agent (deterministic, no LLM).
 
-Selects the top-N findings by risk and turns each into an ``EvidencePack``:
-the finding, its component, its dependency path and its evidence records,
-copied from tool output. Later agents see only these packs.
+Groups findings by package (version and platform qualifiers ignored), keeps every
+group whose highest risk level reaches the policy minimum, and turns each finding into
+an ``EvidencePack``: the finding, its component, its dependency path and its evidence
+records, copied from tool output. Later agents see only these packs.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from guardian.ai.context import ReviewContext, as_text
-from guardian.ai.state import EvidencePack
+from guardian.ai.context import RISK_ORDER, ReviewContext, as_text
+from guardian.ai.state import EvidencePack, PackageGroup
 from guardian.ai.validator import purl_name_version
 from guardian.models import Finding
+from guardian.relevance import rank as relevance_rank
 
 
 def _evidence_view(ctx: ReviewContext, evidence_id: str) -> dict[str, Any]:
@@ -70,5 +72,44 @@ def build_pack(ctx: ReviewContext, finding: Finding) -> EvidencePack:
     )
 
 
-def triage(ctx: ReviewContext, top_n: int) -> list[EvidencePack]:
-    return [build_pack(ctx, finding) for finding in ctx.top_findings(top_n)]
+LEVELS = tuple(RISK_ORDER)
+
+
+def package_key(purl: str) -> str:
+    """'pkg:gem/nokogiri@1.19.0-aarch64-linux-gnu?platform=x' -> 'gem:nokogiri'."""
+    ecosystem = purl.removeprefix("pkg:").split("/", 1)[0].lower()
+    return f"{ecosystem}:{purl_name_version(purl)[0]}"
+
+
+def _risk_rank(finding: Finding) -> int:
+    return RISK_ORDER.get(as_text(finding.risk_level).lower(), len(RISK_ORDER))
+
+
+def _finding_order(finding: Finding) -> tuple[int, int, str]:
+    return relevance_rank(finding), _risk_rank(finding), finding.finding_id
+
+
+def triage(
+    ctx: ReviewContext, min_risk: str, max_groups: int
+) -> tuple[list[PackageGroup], list[EvidencePack]]:
+    """Package groups at or above ``min_risk`` (highest risk first, capped) and their packs."""
+    if min_risk not in RISK_ORDER:
+        raise ValueError(
+            f"GUARDIAN_AI_MIN_RISK must be one of {', '.join(RISK_ORDER)}, not '{min_risk}'."
+        )
+    members: dict[str, list[Finding]] = {}
+    for finding in sorted(ctx.findings.values(), key=_finding_order):
+        members.setdefault(package_key(finding.purl), []).append(finding)
+    ranked = sorted((min(_risk_rank(f) for f in found), key) for key, found in members.items())
+    groups = [
+        PackageGroup(
+            group_id=key,
+            package=key.split(":", 1)[1],
+            top_risk=LEVELS[best],
+            finding_ids=[f.finding_id for f in members[key]],
+        )
+        for best, key in ranked
+        if best <= RISK_ORDER[min_risk]
+    ][:max_groups]
+    packs = [build_pack(ctx, ctx.findings[fid]) for g in groups for fid in g.finding_ids]
+    return groups, packs

@@ -7,6 +7,7 @@ from guardian.detectors.plugins import (
     _run_git_diff,
     _run_image_pin,
     _run_install_script,
+    _run_lockfile_integrity,
     _run_sbom_diff,
     _run_typosquat,
     _run_unverified_source,
@@ -23,6 +24,7 @@ DETECTORS: dict[str, list[DetectorPlugin]] = {
         DetectorPlugin("typosquat", _run_typosquat),
         DetectorPlugin("install_script", _run_install_script),
         DetectorPlugin("unverified_source", _run_unverified_source),
+        DetectorPlugin("lockfile_integrity", _run_lockfile_integrity),
     ],
 }
 

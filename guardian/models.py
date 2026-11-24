@@ -7,8 +7,9 @@ import hashlib
 import json
 from datetime import datetime
 from enum import StrEnum
+from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 UNKNOWN = "UNKNOWN"
 
@@ -73,6 +74,37 @@ class Confidence(StrEnum):
     HIGH = "high"
     MEDIUM = "medium"
     LOW = "low"
+
+
+class SsvcDecision(StrEnum):
+    ACT = "act"
+    ATTEND = "attend"
+    TRACK_STAR = "track_star"
+    TRACK = "track"
+
+
+class Exploitation(StrEnum):
+    ACTIVE = "active"
+    LIKELY = "likely"
+    NONE = "none"
+    UNKNOWN = "unknown"
+
+
+class Exposure(StrEnum):
+    OPEN = "open"
+    LIMITED = "limited"
+    SMALL = "small"
+
+
+class Automatable(StrEnum):
+    YES = "yes"
+    NO = "no"
+    UNKNOWN = "unknown"
+
+
+class TechnicalImpact(StrEnum):
+    TOTAL = "total"
+    PARTIAL = "partial"
 
 
 class ClaimKind(StrEnum):
@@ -200,6 +232,29 @@ class Finding(BaseModel):
     image_tag: str | None = None
     risk_note: str | None = None
     relevance: Relevance | None = None
+    cvss_vector: str | None = None
+    cvss_score: float | None = Field(default=None, ge=0, le=10)
+    epss: float | None = Field(default=None, ge=0, le=1)
+    epss_percentile: float | None = Field(default=None, ge=0, le=1)
+    epss_date: str | None = None
+    known_exploited: bool | None = None
+    intel_evidence_ids: list[str] = Field(default_factory=list)
+    ssvc_decision: SsvcDecision | None = None
+    exploitation: Exploitation | None = None
+    exposure: Exposure | None = None
+    automatable: Automatable | None = None
+    technical_impact: TechnicalImpact | None = None
+    risk_score: int | None = Field(default=None, ge=0, le=100)
+    risk_reasons: list[str] = Field(default_factory=list)
+    confidence_score: float | None = Field(default=None, ge=0, le=1)
+    review_required: bool = False
+    review_reasons: list[str] = Field(default_factory=list)
+    engine_risk_level: RiskLevel | None = None
+    ai_adjusted: bool = False
+    ai_adjustment_reason: str | None = None
+    ai_adjustment_evidence_ids: list[str] = Field(default_factory=list)
+    human_decision: str | None = None
+    human_note: str | None = None
 
 
 class AgentClaim(BaseModel):
@@ -223,6 +278,7 @@ class AgentTrace(BaseModel):
     rejected: int = 0
     llm_calls: int = 0
     error: str | None = None
+    provider: str | None = None
 
 
 class CoverageRow(BaseModel):
@@ -238,11 +294,54 @@ class GraphArtifact(BaseModel):
     edges: list[Edge] = Field(default_factory=list)
 
 
+class RiskAdjustment(BaseModel):
+    """The risk analyst's proposed one-level change, kept with its verdict and never merged."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    finding_id: str
+    from_level: Literal["critical", "high", "medium", "low"]
+    to_level: Literal["critical", "high", "medium", "low"]
+    direction: Literal["raise", "lower"]
+    reason: str = Field(min_length=1, max_length=300)
+    evidence_ids: list[str] = Field(default_factory=list, max_length=20)
+    status: Literal["accepted", "rejected"] = "accepted"
+    rejected_reason: str | None = None
+
+
+class FixAction(StrEnum):
+    UPGRADE = "upgrade"
+    UPGRADE_PARENT = "upgrade_parent"
+    PIN_VERSION = "pin_version"
+    REMOVE_DEPENDENCY = "remove_dependency"
+    REPLACE_DEPENDENCY = "replace_dependency"
+    PIN_ACTION_SHA = "pin_action_sha"
+    PIN_IMAGE_DIGEST = "pin_image_digest"
+    ESCALATE_REVIEW = "escalate_review"
+
+
+class RemediationProposal(BaseModel):
+    proposal_id: str
+    finding_id: str
+    action: FixAction
+    target_version: str | None
+    rationale: str
+    rollback: str
+    breaking_change_risk: str
+    evidence_ids: list[str]
+    requires_human_approval: bool = True
+    validated: bool = False
+    rejected_reason: str | None = None
+
+
 class FindingsArtifact(BaseModel):
     findings: list[Finding] = Field(default_factory=list)
     evidence: list[Evidence] = Field(default_factory=list)
     claims: list[AgentClaim] = Field(default_factory=list)
     agent_trace: list[AgentTrace] = Field(default_factory=list)
+    risk_adjustments: list[RiskAdjustment] = Field(default_factory=list)
+    agreement: dict[str, bool] = Field(default_factory=dict)
+    proposals: list[RemediationProposal] = Field(default_factory=list)
 
 
 class EcosystemCoverage(BaseModel):

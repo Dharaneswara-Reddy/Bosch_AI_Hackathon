@@ -11,9 +11,11 @@ from __future__ import annotations
 import json
 import re
 import socket
+import threading
+import time
 import urllib.error
 import urllib.request
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -27,6 +29,38 @@ JsonObject = dict[str, Any]
 GROQ_DEFAULT_MODEL = "openai/gpt-oss-120b"
 USER_AGENT = "guardian/0.1 (+supply-chain-guardian)"
 PROVIDERS = ("none", "groq", "openai_compatible")
+RATE_LIMIT_RETRIES = 2
+MAX_TOKENS = 2048
+BACKOFF_BASE_S = 1.0
+GEMINI_DEFAULT_MODEL = "gemini-2.5-flash"
+OPENAI_DEFAULT_MODEL = "gpt-4o-mini"
+ANTHROPIC_DEFAULT_MODEL = "claude-haiku-5-5"
+# name -> (key env var, model env var, default model, OpenAI-compatible base URL, strict schema).
+# Anthropic's compatibility layer ignores response_format, so it gets JSON mode and relies on
+# the schema already embedded in the system prompt.
+FALLBACK_PROVIDERS: dict[str, tuple[str, str, str, str, bool]] = {
+    "gemini": (
+        "GEMINI_API_KEY",
+        "GUARDIAN_GEMINI_MODEL",
+        GEMINI_DEFAULT_MODEL,
+        "https://generativelanguage.googleapis.com/v1beta/openai",
+        True,
+    ),
+    "openai": (
+        "OPENAI_API_KEY",
+        "GUARDIAN_OPENAI_MODEL",
+        OPENAI_DEFAULT_MODEL,
+        "https://api.openai.com/v1",
+        True,
+    ),
+    "anthropic": (
+        "ANTHROPIC_API_KEY",
+        "GUARDIAN_ANTHROPIC_MODEL",
+        ANTHROPIC_DEFAULT_MODEL,
+        "https://api.anthropic.com/v1",
+        False,
+    ),
+}
 
 
 class LLMError(Exception):
@@ -135,10 +169,19 @@ class LangChainChatClient:
     breaker can act on them; nothing is swallowed.
     """
 
-    def __init__(self, model: BaseChatModel, name: str, strict_schema: bool = True) -> None:
+    def __init__(
+        self,
+        model: BaseChatModel,
+        name: str,
+        strict_schema: bool = True,
+        rate_limit_retries: int = RATE_LIMIT_RETRIES,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
         self._model = model
         self.name = name
         self._strict_schema = strict_schema
+        self.rate_limit_retries = rate_limit_retries
+        self._sleep = sleep
 
     def complete(self, system: str, user: str, schema: JsonObject, timeout: float) -> JsonObject:
         runnable = (
@@ -146,11 +189,40 @@ class LangChainChatClient:
             if (self._strict_schema)
             else self._model
         )
-        try:
-            message = runnable.invoke([SystemMessage(content=system), HumanMessage(content=user)])
-        except Exception as exc:  # noqa: BLE001 - re-raised as a typed LLMError
-            raise _provider_error(exc) from exc
-        return parse_json_object(str(message.content))
+        messages = [SystemMessage(content=system), HumanMessage(content=user)]
+        deadline = time.monotonic() + timeout
+        attempt = 0
+        while True:
+            try:
+                message = runnable.invoke(messages)
+            except Exception as exc:  # noqa: BLE001 - re-raised as a typed LLMError
+                wait = _retry_after(exc, attempt)
+                last = attempt == self.rate_limit_retries
+                if wait is None or last or time.monotonic() + wait >= deadline:
+                    raise _provider_error(exc) from exc
+                self._sleep(wait)
+                attempt += 1
+                continue
+            return parse_json_object(str(message.content))
+
+
+def _provider_message(exc: Exception) -> str:
+    body = getattr(exc, "body", None)
+    message = body.get("message") if isinstance(body, dict) else None
+    return str(message)[:300] if message else ""
+
+
+def _retry_after(exc: Exception, attempt: int) -> float | None:
+    """Seconds to wait before retrying a 429, or ``None`` when retrying cannot help."""
+    if getattr(exc, "status_code", None) != 429:
+        return None
+    if "request too large" in _provider_message(exc).lower():
+        return None
+    headers = getattr(getattr(exc, "response", None), "headers", None) or {}
+    try:
+        return max(0.0, float(headers.get("retry-after", "")))
+    except ValueError:
+        return BACKOFF_BASE_S * 2**attempt
 
 
 def _strict_format(schema: JsonObject) -> JsonObject:
@@ -165,14 +237,26 @@ def _provider_error(exc: Exception) -> LLMError:
     if "timeout" in type(exc).__name__.lower():
         return LLMTimeout("No reply within the deadline.")
     if status == 400:
-        return LLMBadResponse("Provider rejected the reply as not matching the agent schema (400).")
+        detail = _provider_message(exc)
+        return LLMBadResponse(
+            "Provider rejected the reply as not matching the agent schema (400)."
+            + (f" {detail}" if detail else "")
+        )
     hints = {401: " Check GUARDIAN_LLM_API_KEY.", 403: " Key lacks access.", 429: " Rate limited."}
     if isinstance(status, int):
-        return LLMError(f"Provider returned HTTP {status}.{hints.get(status, '')}")
+        detail = _provider_message(exc)
+        detail = f" {detail}" if detail else ""
+        return LLMError(f"Provider returned HTTP {status}.{hints.get(status, '')}{detail}")
     return LLMError(f"Provider call failed: {type(exc).__name__}.")
 
 
-def groq_client(api_key: str, model: str = GROQ_DEFAULT_MODEL, timeout: float = 30.0) -> LLMClient:
+def groq_client(
+    api_key: str,
+    model: str = GROQ_DEFAULT_MODEL,
+    timeout: float = 30.0,
+    rate_limit_retries: int = RATE_LIMIT_RETRIES,
+    max_tokens: int = MAX_TOKENS,
+) -> LLMClient:
     """Groq through LangChain (``langchain-groq``), strict structured outputs, no SDK retries."""
     if not api_key:
         raise ValueError(
@@ -185,16 +269,33 @@ def groq_client(api_key: str, model: str = GROQ_DEFAULT_MODEL, timeout: float = 
         temperature=0,
         max_retries=0,
         timeout=timeout,
+        max_tokens=max_tokens,
     )
-    return LangChainChatClient(chat, name="groq")
+    return LangChainChatClient(chat, name="groq", rate_limit_retries=rate_limit_retries)
+
+
+def _http_message(exc: urllib.error.HTTPError) -> str:
+    """The provider's error text; Gemini wraps the OpenAI-style error object in a list."""
+    try:
+        data = json.loads(exc.read() or b"null")
+    except (OSError, json.JSONDecodeError):
+        return ""
+    error = (data[0] if isinstance(data, list) and data else data) or {}
+    error = error.get("error", error) if isinstance(error, dict) else {}
+    message = error.get("message") if isinstance(error, dict) else None
+    return str(message)[:300] if message else ""
 
 
 def _http_error(exc: urllib.error.HTTPError) -> LLMError:
-    """400 = the model broke the schema (retry once); anything else trips the circuit breaker."""
-    if exc.code == 400:
-        return LLMBadResponse("Provider rejected the reply as not matching the claim schema (400).")
-    hints = {401: " Check GROQ_API_KEY.", 403: " Key lacks access.", 429: " Rate limited."}
-    return LLMError(f"Provider returned HTTP {exc.code}.{hints.get(exc.code, '')}")
+    """A 400 is a schema break (retry once) unless it is a bad key, which trips the breaker."""
+    detail = _http_message(exc)
+    suffix = f" {detail}" if detail else ""
+    if exc.code == 400 and "api key" not in detail.lower():
+        return LLMBadResponse(
+            f"Provider rejected the reply as not matching the claim schema (400).{suffix}"
+        )
+    hints = {401: " Check the API key.", 403: " Key lacks access.", 429: " Rate limited."}
+    return LLMError(f"Provider returned HTTP {exc.code}.{hints.get(exc.code, '')}{suffix}")
 
 
 _FENCE = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE)
@@ -213,18 +314,106 @@ def parse_json_object(text: str) -> JsonObject:
 
 
 def build_client(
-    provider: str, model: str = "", api_key: str = "", base_url: str = ""
+    provider: str,
+    model: str = "",
+    api_key: str = "",
+    base_url: str = "",
+    rate_limit_retries: int = RATE_LIMIT_RETRIES,
+    max_tokens: int = MAX_TOKENS,
 ) -> LLMClient:
     """Factory used by the runner. Raises ``ValueError`` (fail at startup) on bad settings."""
     if provider in ("", "none"):
         return NoneClient()
     if provider == "groq":
-        return groq_client(api_key=api_key, model=model)
+        return groq_client(
+            api_key=api_key,
+            model=model,
+            rate_limit_retries=rate_limit_retries,
+            max_tokens=max_tokens,
+        )
     if provider == "openai_compatible":
         return OpenAICompatibleClient(base_url=base_url, api_key=api_key, model=model)
     raise ValueError(
         f"Unknown GUARDIAN_LLM_PROVIDER '{provider}'. Use one of: {', '.join(PROVIDERS)}."
     )
+
+
+class FallbackClient:
+    """Ordered provider chain with a per-run breaker: a provider that fails is not retried.
+
+    Schema mismatches (``LLMBadResponse``) and "not configured" (``LLMUnavailable``) are
+    re-raised unchanged: the runtime retries the former once, and neither says the provider
+    is down. Every other ``LLMError`` (429, 5xx, 401/403, timeout, network) moves on.
+    """
+
+    def __init__(self, providers: list[tuple[str, LLMClient]], skipped: dict[str, str]) -> None:
+        self._providers = providers
+        self.skipped = skipped
+        self.failed: dict[str, str] = {}
+        self._down: set[str] = set()
+        self._lock = threading.Lock()
+        self._local = threading.local()
+        self.name = "→".join(label.split(":")[0] for label, _ in providers)
+
+    @property
+    def last_used(self) -> str | None:
+        """The provider that answered this thread's latest call (calls run in parallel)."""
+        value: str | None = getattr(self._local, "last_used", None)
+        return value
+
+    def revive(self) -> None:
+        """Try every provider again; ``failed`` keeps the history for the trace."""
+        with self._lock:
+            self._down.clear()
+
+    @property
+    def labels(self) -> list[str]:
+        return [label for label, _ in self._providers]
+
+    def complete(self, system: str, user: str, schema: JsonObject, timeout: float) -> JsonObject:
+        for label, client in self._providers:
+            with self._lock:
+                if label in self._down:
+                    continue
+            try:
+                result = client.complete(system, user, schema, timeout)
+            except (LLMBadResponse, LLMUnavailable):
+                raise
+            except LLMError as exc:
+                with self._lock:
+                    self.failed.setdefault(label, f"{type(exc).__name__}: {exc}")
+                    self._down.add(label)
+                continue
+            self._local.last_used = label
+            return result
+        with self._lock:
+            reasons = "; ".join(f"{label}: {reason}" for label, reason in self.failed.items())
+        raise LLMError(f"All LLM providers failed. {reasons}")
+
+
+def with_fallbacks(primary: LLMClient, primary_label: str, env: Mapping[str, str]) -> LLMClient:
+    """Wrap the primary client in the ``GUARDIAN_LLM_FALLBACKS`` chain; AI off stays off."""
+    if isinstance(primary, NoneClient):
+        return primary
+    providers: list[tuple[str, LLMClient]] = [(primary_label, primary)]
+    skipped: dict[str, str] = {}
+    for name in [n.strip().lower() for n in env.get("GUARDIAN_LLM_FALLBACKS", "").split(",")]:
+        if not name:
+            continue
+        if name not in FALLBACK_PROVIDERS:
+            raise ValueError(
+                f"Unknown provider '{name}' in GUARDIAN_LLM_FALLBACKS. "
+                f"Use: {', '.join(FALLBACK_PROVIDERS)}."
+            )
+        key_var, model_var, default_model, base_url, strict = FALLBACK_PROVIDERS[name]
+        key = env.get(key_var, "").strip()
+        if not key:
+            skipped[name] = "skipped: no key"
+            continue
+        model = env.get(model_var, "").strip() or default_model
+        client = OpenAICompatibleClient(base_url, key, model, strict_schema=strict)
+        providers.append((f"{name}:{model}", client))
+    return FallbackClient(providers, skipped)
 
 
 def read_env_file(path: Path) -> dict[str, str]:
@@ -250,4 +439,6 @@ def client_from_env(env: Mapping[str, str]) -> LLMClient:
         model=env.get("GUARDIAN_LLM_MODEL", ""),
         api_key=api_key.strip(),
         base_url=env.get("GUARDIAN_LLM_BASE_URL", ""),
+        rate_limit_retries=int(env.get("GUARDIAN_LLM_RATE_LIMIT_RETRIES", RATE_LIMIT_RETRIES)),
+        max_tokens=int(env.get("GUARDIAN_LLM_MAX_TOKENS", MAX_TOKENS)),
     )

@@ -14,14 +14,16 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections.abc import Mapping
 
-from guardian.ai.context import ReviewContext
+from guardian.ai.context import RISK_ORDER, ReviewContext, as_text
 from guardian.ai.schemas import LLMProposal
 from guardian.ai.state import EvidencePack, FixAction, RemediationCandidate, RemediationProposal
 from guardian.ai.validator import validate
-from guardian.models import AgentClaim, ClaimKind
+from guardian.models import AgentClaim, ClaimKind, Finding
 
 A = FixAction
+PLANNER_LEVELS = frozenset({"critical", "high"})
 ANOMALY_ACTIONS: dict[str, list[FixAction]] = {
     "unexpected_dependency": [A.REMOVE_DEPENDENCY, A.ESCALATE_REVIEW],
     "suspected_typosquat": [A.REPLACE_DEPENDENCY, A.REMOVE_DEPENDENCY, A.ESCALATE_REVIEW],
@@ -29,6 +31,9 @@ ANOMALY_ACTIONS: dict[str, list[FixAction]] = {
     "unverified_install_script": [A.REMOVE_DEPENDENCY, A.REPLACE_DEPENDENCY, A.ESCALATE_REVIEW],
     "dependency_update": [A.PIN_VERSION, A.ESCALATE_REVIEW],
     "unpinned_ci_action": [A.PIN_ACTION_SHA, A.ESCALATE_REVIEW],
+    "integrity_change": [A.PIN_VERSION, A.REMOVE_DEPENDENCY, A.ESCALATE_REVIEW],
+    "resolved_source_change": [A.PIN_VERSION, A.REMOVE_DEPENDENCY, A.ESCALATE_REVIEW],
+    "missing_integrity": [A.PIN_VERSION, A.ESCALATE_REVIEW],
     "unpinned_base_image": [A.PIN_IMAGE_DIGEST, A.ESCALATE_REVIEW],
 }
 # Fixes are made in manifests and lockfiles, so fix proposals may name these files
@@ -99,6 +104,27 @@ def build_candidate(pack: EvidencePack) -> RemediationCandidate:
         major_version_change=current is not None and bool(majors) and current not in majors,
         evidence_ids=list(pack.evidence_ids),
     )
+
+
+def planner_candidates(
+    candidates: list[RemediationCandidate], findings: Mapping[str, Finding], limit: int
+) -> list[RemediationCandidate]:
+    """The few candidates worth an LLM call: high/critical or review-required, worst first."""
+
+    def rank(candidate: RemediationCandidate) -> tuple[int, str]:
+        level = as_text(findings[candidate.finding_id].risk_level).lower()
+        return RISK_ORDER.get(level, len(RISK_ORDER)), candidate.finding_id
+
+    urgent = [
+        c
+        for c in candidates
+        if c.finding_id in findings
+        and (
+            findings[c.finding_id].review_required
+            or as_text(findings[c.finding_id].risk_level).lower() in PLANNER_LEVELS
+        )
+    ]
+    return sorted(urgent, key=rank)[:limit]
 
 
 def build_candidates(packs: list[EvidencePack], accepted: set[str]) -> list[RemediationCandidate]:

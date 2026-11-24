@@ -6,8 +6,18 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from guardian.changes import ChangeSummary
+from guardian.decisions import ReviewSummary
 from guardian.fetch import FetchedFile
-from guardian.models import AgentClaim, AgentTrace, CoverageArtifact, Evidence, Finding, Scan
+from guardian.models import (
+    AgentClaim,
+    AgentTrace,
+    CoverageArtifact,
+    Evidence,
+    Finding,
+    RiskAdjustment,
+    Scan,
+)
 
 Status = Literal["running", "complete", "partial", "failed"]
 
@@ -15,6 +25,7 @@ Status = Literal["running", "complete", "partial", "failed"]
 class ScanRequest(BaseModel):
     url: str = Field(default="", max_length=400)
     ref: str = Field(default="", max_length=120)
+    baseline_ref: str = Field(default="", max_length=120)
     inject_fake_claim: bool = False
     demo: bool = False
 
@@ -22,6 +33,8 @@ class ScanRequest(BaseModel):
     def require_url_unless_demo(self) -> "ScanRequest":
         if not self.demo and not self.url.strip():
             raise ValueError("Enter a GitHub repository URL, or choose the built-in demo app.")
+        if self.demo and self.baseline_ref.strip():
+            raise ValueError("A baseline comparison needs a GitHub repository, not the demo app.")
         return self
 
 
@@ -31,6 +44,7 @@ class ScanRecord(BaseModel):
     stage: str = "queued"
     repository_url: str
     ref: str = ""
+    baseline_ref: str = ""
     commit_sha: str = ""
     llm_status: str = "unavailable"
     demo: bool = False
@@ -62,3 +76,7 @@ class ScanResult(BaseModel):
     fetch: FetchSummary
     claims: list[AgentClaim] = Field(default_factory=list)
     agent_trace: list[AgentTrace] = Field(default_factory=list)
+    risk_adjustments: list[RiskAdjustment] = Field(default_factory=list)
+    agreement: dict[str, bool] = Field(default_factory=dict)
+    review_summary: ReviewSummary = Field(default_factory=ReviewSummary)
+    changes: ChangeSummary | None = None

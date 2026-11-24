@@ -48,9 +48,53 @@ def _evidence_url(vuln: dict[str, Any]) -> str | None:
     return str(urls[0]) if urls else None
 
 
+def _best_cvss(vuln: dict[str, Any]) -> tuple[str | None, float | None]:
+    entries = [c for c in vuln.get("cvss") or [] if isinstance(c, dict) and c.get("vector")]
+    if not entries:
+        return None, None
+    scored = [(float(c.get("metrics", {}).get("baseScore", 0)), str(c["vector"])) for c in entries]
+    score, vector = max(scored, key=lambda item: item[0])
+    return vector, score
+
+
+def _best_epss(vuln: dict[str, Any]) -> dict[str, Any]:
+    entries = [e for e in vuln.get("epss") or [] if isinstance(e, dict) and "epss" in e]
+    if not entries:
+        return {}
+    best = max(entries, key=lambda e: float(e["epss"]))
+    return {
+        "epss": float(best["epss"]),
+        "epss_percentile": float(best["percentile"]) if "percentile" in best else None,
+        "epss_date": str(best["date"]) if best.get("date") else None,
+    }
+
+
+def _intel(
+    vuln: dict[str, Any], base: Evidence, index: int
+) -> tuple[dict[str, Any], list[Evidence]]:
+    """Exploit and severity intel from one match, each field cited by its own evidence record."""
+    vector, score = _best_cvss(vuln)
+    fields: dict[str, Any] = {"cvss_vector": vector, "cvss_score": score, **_best_epss(vuln)}
+    if isinstance(vuln.get("knownExploited"), list):
+        fields["known_exploited"] = bool(vuln["knownExploited"])
+    present = {
+        "cvss": vector is not None,
+        "epss": "epss" in fields,
+        "knownExploited": "known_exploited" in fields,
+    }
+    records = [
+        base.model_copy(update={
+            "evidence_id": f"ev-grype-{index}-{key}-{base.sha256[:8]}",
+            "pointer": f"{base.pointer}/vulnerability/{key}",
+        })
+        for key, has in present.items() if has
+    ]
+    return fields, records
+
+
 def _parse_match(
     match: dict[str, Any], index: int, tool_version: str, raw_file: str, raw_sha256: str
-) -> tuple[Finding, Evidence]:
+) -> tuple[Finding, list[Evidence]]:
     vuln = match["vulnerability"]
     purl = _purl(match["artifact"])
     advisory_id = str(vuln["id"])
@@ -65,6 +109,7 @@ def _parse_match(
         sha256=raw_sha256,
         url=_evidence_url(vuln),
     )
+    intel, intel_records = _intel(vuln, evidence, index)
     finding = Finding(
         finding_id=finding_id("grype", purl, advisory_id, []),
         kind=FindingKind.VULNERABILITY,
@@ -78,8 +123,10 @@ def _parse_match(
         fixed_versions=[str(v) for v in vuln.get("fix", {}).get("versions", [])],
         match_basis=_match_basis(match.get("matchDetails", [])),
         evidence_ids=[evidence.evidence_id],
+        intel_evidence_ids=[r.evidence_id for r in intel_records],
+        **intel,
     )
-    return finding, evidence
+    return finding, [evidence, *intel_records]
 
 
 def parse_grype(
@@ -92,7 +139,9 @@ def parse_grype(
         _parse_match(m, i, tool_version, raw_file, raw_sha256)
         for i, m in enumerate(raw.get("matches", []))
     ]
-    evidence = [e.model_copy(update={"db_built_at": db_built_at}) for _, e in pairs]
+    evidence = [
+        e.model_copy(update={"db_built_at": db_built_at}) for _, records in pairs for e in records
+    ]
     return [f for f, _ in pairs], evidence
 
 

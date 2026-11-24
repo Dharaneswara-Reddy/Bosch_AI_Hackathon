@@ -2,26 +2,39 @@
 
 import os
 import tempfile
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
+from guardian.ai.llm import FALLBACK_PROVIDERS
+from guardian.changes import ChangeSummary
 from guardian.fetch import FetchError
 from guardian.models import GraphArtifact
 
-from . import pipeline
+from . import pipeline, remediation, review
 from .schemas import ScanRecord, ScanRequest, ScanResult, ScanStarted
 
 pipeline.load_root_env()
-app = FastAPI(title="Bosch Guardian API", version="0.3.0")
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    pipeline.load_records(scan_base())
+    yield
+
+
+app = FastAPI(title="Bosch Guardian API", version="0.3.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
+app.include_router(remediation.router)
 _default_base: Path | None = None
 
 
@@ -40,7 +53,7 @@ def scan_base() -> Path:
 def _record(scan_id: str) -> ScanRecord:
     record = pipeline.SCANS.get(scan_id)
     if record is None:
-        raise HTTPException(404, "Scan not found; scans are kept in memory and reset on restart")
+        raise HTTPException(404, "Scan not found")
     return record
 
 
@@ -62,19 +75,32 @@ def _artifact(scan_id: str, name: str) -> Path:
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    ai = os.environ.get("GUARDIAN_LLM_PROVIDER", "none") if pipeline.ai_enabled() else "off"
-    return {"status": "ok", "service": "bosch-guardian", "ai": ai}
+    if not pipeline.ai_enabled():
+        return {"status": "ok", "service": "bosch-guardian", "ai": "off"}
+    chain = [os.environ.get("GUARDIAN_LLM_PROVIDER", "none").strip().lower()]
+    for name in os.environ.get("GUARDIAN_LLM_FALLBACKS", "").split(","):
+        name = name.strip().lower()
+        if name in FALLBACK_PROVIDERS and os.environ.get(FALLBACK_PROVIDERS[name][0], "").strip():
+            chain.append(name)
+    return {"status": "ok", "service": "bosch-guardian", "ai": "→".join(chain)}
 
 
 @app.post("/scan", status_code=202)
 def start_scan(request: ScanRequest, background: BackgroundTasks) -> ScanStarted:
     try:
-        record = (pipeline.create_demo_record(scan_base()) if request.demo
-                  else pipeline.create_record(request.url, request.ref, scan_base()))
+        record = (
+            pipeline.create_demo_record(scan_base())
+            if request.demo
+            else pipeline.create_record(
+                request.url, request.ref, scan_base(), request.baseline_ref.strip())
+        )
     except FetchError as error:
         raise HTTPException(422, str(error)) from error
     background.add_task(
-        pipeline.run_pipeline, record, os.environ.get("GITHUB_TOKEN"), request.inject_fake_claim,
+        pipeline.run_pipeline,
+        record,
+        os.environ.get("GITHUB_TOKEN"),
+        request.inject_fake_claim,
     )
     return ScanStarted(scan_id=record.scan_id, status=record.status)
 
@@ -89,6 +115,16 @@ def scan_result(scan_id: str) -> ScanResult:
     return pipeline.load_result(_finished(scan_id))
 
 
+@app.get("/scan/{scan_id}/changes")
+def scan_changes(scan_id: str) -> ChangeSummary:
+    record = _finished(scan_id)
+    path = record.work_dir / "out" / pipeline.CHANGES_FILE
+    if not path.is_file():
+        reason = record.errors.get("baseline") or "no baseline_ref was requested for this scan"
+        raise HTTPException(404, f"No change summary: {reason}")
+    return ChangeSummary.model_validate_json(path.read_text("utf-8"))
+
+
 @app.get("/scan/{scan_id}/graph")
 def scan_graph(scan_id: str) -> GraphArtifact:
     return GraphArtifact.model_validate_json(_artifact(scan_id, "graph.json").read_text("utf-8"))
@@ -97,7 +133,8 @@ def scan_graph(scan_id: str) -> GraphArtifact:
 @app.get("/scan/{scan_id}/sbom")
 def scan_sbom(scan_id: str) -> FileResponse:
     return FileResponse(
-        _artifact(scan_id, "sbom.cdx.json"), media_type="application/json",
+        _artifact(scan_id, "sbom.cdx.json"),
+        media_type="application/json",
         filename="sbom.cdx.json",
     )
 
@@ -105,3 +142,11 @@ def scan_sbom(scan_id: str) -> FileResponse:
 @app.get("/scan/{scan_id}/report")
 def scan_report(scan_id: str) -> FileResponse:
     return FileResponse(_artifact(scan_id, "report.html"), media_type="text/html")
+
+
+@app.get("/scan/{scan_id}/report.json")
+def scan_report_json(scan_id: str) -> FileResponse:
+    return FileResponse(_artifact(scan_id, "report.json"), media_type="application/json")
+
+
+app.include_router(review.build_router(_finished))
