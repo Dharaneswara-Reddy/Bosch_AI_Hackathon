@@ -21,6 +21,7 @@ from guardian.models import (
     FindingsArtifact,
     GraphArtifact,
     LlmStatus,
+    ReachabilityRecord,
     Scan,
 )
 from guardian.relevance import rank
@@ -30,8 +31,9 @@ Artifact = TypeVar("Artifact", bound=BaseModel)
 RISK_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3}
 FIX_STEP = "remediation_planner"
 LIMITATIONS = (
-    "Reachability is a static import search of the application's own source; it does not "
-    "prove that a vulnerable function is called, and no hit is not proof of safety.",
+    "Reachability combines a bounded static dependency-chain search with an optional runtime "
+    "module-load trace from requested tests/app runs. It does not prove a vulnerable function "
+    "is called, and no hit is not proof of safety; tests may not cover every code path.",
     "Exploitation data (CISA KEV, EPSS) is shown only when the scanner output includes it.",
     "Fix proposals are applied only after human approval, in a sandbox copy; a fix without a "
     "passing test run is verified by build and rescan only.",
@@ -234,6 +236,10 @@ def render(run_dir: Path) -> None:
     ranked = cast(list[Finding], data["findings"])
     environment = _environment()
     final = build_report(scan, graph, artifacts, ranked, decisions, load_fixes(root.parent))
+    reachability_path = root / "reachability.json"
+    if reachability_path.is_file():
+        reachability = ReachabilityRecord.model_validate_json(reachability_path.read_bytes())
+        final = final.model_copy(update={"reachability": reachability})
     (root / "report.json").write_text(final.model_dump_json(indent=2) + "\n", encoding="utf-8")
     data["final"] = final
     data["final_findings"] = {item.finding_id: item for item in final.findings}

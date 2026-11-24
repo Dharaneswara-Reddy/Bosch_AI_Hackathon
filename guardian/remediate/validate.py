@@ -78,7 +78,10 @@ def _container(engine: str, name: str, root: Path, *, offline: bool) -> list[str
     dns = os.environ.get("GUARDIAN_SANDBOX_DNS", "").strip()
     networked = ["--dns", dns] if dns else []
     isolation = ["--network", "none", "--read-only", "--cap-drop", "ALL"] if offline else networked
-    user = f"{os.getuid()}:{os.getgid()}"
+    get_uid = getattr(os, "getuid", None)
+    get_gid = getattr(os, "getgid", None)
+    user = f"{get_uid()}:{get_gid()}" if callable(get_uid) and callable(get_gid) else ""
+    user_args = ["--user", user] if user else []
     return [
         engine,
         "run",
@@ -87,8 +90,7 @@ def _container(engine: str, name: str, root: Path, *, offline: bool) -> list[str
         name,
         *isolation,
         *LIMITS,
-        "--user",
-        user,
+        *user_args,
         "--security-opt",
         "no-new-privileges",
         "--tmpfs",
@@ -104,13 +106,28 @@ def _container(engine: str, name: str, root: Path, *, offline: bool) -> list[str
 
 
 def _run_container(
-    capture: Runner, engine: str, root: Path, command: list[str], *, offline: bool, timeout: int
+    capture: Runner,
+    engine: str,
+    root: Path,
+    command: list[str],
+    *,
+    offline: bool,
+    timeout: int,
+    mounts: tuple[str, ...] = (),
+    env: tuple[str, ...] = (),
 ) -> CommandResult:
     name = f"guardian-{uuid.uuid4().hex[:12]}"
-    done = capture([*_container(engine, name, root, offline=offline), *command], root, timeout)
-    if done.returncode == TIMED_OUT:
+    base = _container(engine, name, root, offline=offline)
+    image_index = base.index(CONTAINER_IMAGE)
+    command_line = list(base[:image_index])
+    for value in env:
+        command_line.extend(["-e", value])
+    for mount in mounts:
+        command_line.extend(["-v", mount])
+    try:
+        return capture([*command_line, *base[image_index:], *command], root, timeout)
+    finally:
         capture([engine, "rm", "-f", name], root, KILL_TIMEOUT_S)
-    return done
 
 
 def _tail(output: str) -> list[str]:

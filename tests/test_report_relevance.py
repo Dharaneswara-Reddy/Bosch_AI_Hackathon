@@ -88,7 +88,7 @@ def test_report_explains_entry_paths_relevance_and_synthetic_label(tmp_path: Pat
     assert "imported at src/server.js:5" in html
     assert "SYNTHETIC test package" in html
     assert "Proposed:</strong> Proposed fix: upgrade express-jwt" in html
-    assert "Reachability is a static import search" in html
+    assert "Reachability combines a bounded static dependency-chain search" in html
     markdown = (out / "report.md").read_text()
     assert "introduced by express-jwt" in markdown
     assert "### relevant: GHSA-jsonwebtoken" in markdown

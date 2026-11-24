@@ -54,6 +54,15 @@ test('review reasons are listed only when review is required', () => {
     ['critics disagree']);
 });
 
+test('reachability evidence shows the dependency chain and observation context', () => {
+  const why = buildWhy({...base, relevance: {signals: [
+    {name: 'reachability', value: 'confirmed',
+      detail: 'loaded at runtime via express-jwt → jsonwebtoken → jws during npm test'},
+  ]}});
+  assert.equal(why.steps.at(-1),
+    'Reachability evidence: loaded at runtime via express-jwt → jsonwebtoken → jws during npm test');
+});
+
 test('a finding without an SSVC decision has no chain', () => {
   assert.equal(buildWhy({...base, ssvc_decision: null}), null);
 });

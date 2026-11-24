@@ -63,7 +63,7 @@ class FakeEngine:
         if not self.scan_ok:
             return CommandResult(1, "db missing")
         mount = next(c for c in command if c.endswith(":/in"))
-        folder = Path(mount.split(":")[0])
+        folder = Path(mount.rsplit(":/in", 1)[0])
         (folder / "image-vulns.json").write_text(json.dumps({"matches": MATCHES}), encoding="utf-8")
         return CommandResult(0, "")
 
@@ -78,7 +78,9 @@ def _ok(url: str, timeout: float) -> tuple[int, str]:
 
 
 def _run(
-    root: Path, engine: FakeEngine, get: HttpGet = _ok,
+    root: Path,
+    engine: FakeEngine,
+    get: HttpGet = _ok,
     source_ids: frozenset[str] = frozenset({"CVE-LODASH"}),
 ) -> AppRun:
     return run_application(root, root / "fix", "p1", set(source_ids), engine, "docker", get)
@@ -93,7 +95,8 @@ def test_not_run_when_tests_did_not_pass(tmp_path: Path) -> None:
 
 def test_not_run_without_dockerfile_or_engine(tmp_path: Path) -> None:
     assert not_run_reason(tmp_path, PASSED, "docker") == (
-        "no Dockerfile in the project; there is no image to build and run")
+        "no Dockerfile in the project; there is no image to build and run"
+    )
     root = _project(tmp_path)
     assert "no container engine" in (not_run_reason(root, PASSED, None) or "")
     assert not_run_reason(root, PASSED, "docker") is None
@@ -145,8 +148,15 @@ def test_unreachable_app_fails_with_its_logs(tmp_path: Path) -> None:
         raise OSError("connection refused")
 
     result = run_application(
-        _project(tmp_path), tmp_path / "fix", "p1", set(), engine, "docker", refuse,
-        health_timeout_s=0)
+        _project(tmp_path),
+        tmp_path / "fix",
+        "p1",
+        set(),
+        engine,
+        "docker",
+        refuse,
+        health_timeout_s=0,
+    )
     assert result.status == "failed"
     assert "did not answer /health" in result.reason and "connection refused" in result.reason
     assert "listening on 3000" in result.reason
@@ -155,8 +165,15 @@ def test_unreachable_app_fails_with_its_logs(tmp_path: Path) -> None:
 
 def test_non_2xx_health_fails(tmp_path: Path) -> None:
     result = run_application(
-        _project(tmp_path), tmp_path / "fix", "p1", set(), FakeEngine(), "docker",
-        lambda url, timeout: (500, "oops"), health_timeout_s=0)
+        _project(tmp_path),
+        tmp_path / "fix",
+        "p1",
+        set(),
+        FakeEngine(),
+        "docker",
+        lambda url, timeout: (500, "oops"),
+        health_timeout_s=0,
+    )
     assert result.status == "failed" and result.http_status == 500
 
 
