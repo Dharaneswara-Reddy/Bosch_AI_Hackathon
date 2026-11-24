@@ -36,6 +36,14 @@ export function stepCounts(step) {
   return `${step.passed} of ${step.total} passed` + (step.failed ? `, ${step.failed} failed` : '');
 }
 
+export function appRunText(app) {
+  if (app.status !== 'passed') return app.reason;
+  const answered = `answered ${new URL(app.health_url).pathname} with ${app.http_status}`;
+  if (!app.image_vulns) return `${answered}. Image scan unavailable: ${app.image_error}`;
+  const {critical = 0, high = 0} = app.image_vulns;
+  return `${answered}. Image scan: ${critical} critical, ${high} high (${app.image_only_serious} from the base image)`;
+}
+
 const levelText = counts => LEVELS.filter(l => counts[l]).map(l => `${counts[l]} ${l[0].toUpperCase()}${l.slice(1)}`).join(', ');
 
 export function expectedText(reduction) {

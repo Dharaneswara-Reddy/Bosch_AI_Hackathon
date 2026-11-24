@@ -3,7 +3,11 @@
 from collections import defaultdict
 
 from guardian.models import (
-    CoverageArtifact, CoverageRow, EcosystemCoverage, Finding, GraphArtifact,
+    CoverageArtifact,
+    CoverageRow,
+    EcosystemCoverage,
+    Finding,
+    GraphArtifact,
 )
 
 

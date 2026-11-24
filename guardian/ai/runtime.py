@@ -88,11 +88,7 @@ class AgentRuntime:
         if reserved:
             getattr(self.client, "revive", lambda: None)()
         key = branch_key(agent.name, branch)
-        redacted, count = redact_secrets(json.dumps(data, sort_keys=True, default=str))
-        with self._lock:
-            self.attempted.add(agent.name)
-            self.redactions += count
-        system, user = system_prompt(agent, schema), user_prompt(agent, redacted)
+        system, user = self._prepare_prompts(agent, data, schema)
         error = ""
         for _attempt in range(2):
             parsed, error, retry, provider = self._attempt(
@@ -107,6 +103,15 @@ class AgentRuntime:
             if not retry:
                 break
         return None, error
+
+    def _prepare_prompts(
+        self, agent: AgentRole, data: dict[str, Any], schema: JsonSchema
+    ) -> tuple[str, str]:
+        redacted, count = redact_secrets(json.dumps(data, sort_keys=True, default=str))
+        with self._lock:
+            self.attempted.add(agent.name)
+            self.redactions += count
+        return system_prompt(agent, schema), user_prompt(agent, redacted)
 
     def _attempt(
         self,

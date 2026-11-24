@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -41,6 +42,22 @@ def _action_component(action: str) -> dict[str, Any]:
     }
 
 
+def _unpinned_actions(lines: list[str]) -> Iterator[tuple[int, str]]:
+    for line_number, line in enumerate(lines, start=1):
+        if line.lstrip().startswith("#"):
+            continue
+        match = _USES.match(line)
+        if not match:
+            continue
+        action = match.group("value").strip("'\"")
+        if action.startswith("./"):
+            continue
+        ref = action.rsplit("@", 1)[1] if "@" in action else ""
+        if _FULL_SHA.fullmatch(ref):
+            continue
+        yield line_number, action
+
+
 def detect(target_path: Path, *, ecosystems: list[str] | None = None) -> DetectionResult:
     root = Path(target_path)
     known_ecosystems = ecosystem_list([], ecosystems)
@@ -51,18 +68,7 @@ def detect(target_path: Path, *, ecosystems: list[str] | None = None) -> Detecti
         raw = workflow.read_bytes()
         relative = workflow.relative_to(root).as_posix()
         lines = raw.decode("utf-8", errors="replace").splitlines()
-        for line_number, line in enumerate(lines, start=1):
-            if line.lstrip().startswith("#"):
-                continue
-            match = _USES.match(line)
-            if not match:
-                continue
-            action = match.group("value").strip("'\"")
-            if action.startswith("./"):
-                continue
-            ref = action.rsplit("@", 1)[1] if "@" in action else ""
-            if _FULL_SHA.fullmatch(ref):
-                continue
+        for line_number, action in _unpinned_actions(lines):
             record = evidence_record("ci_pin", relative, f"lines:{line_number}-{line_number}", raw)
             evidence.append(record)
             finding, details = finding_payload(

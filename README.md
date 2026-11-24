@@ -54,6 +54,11 @@ With the demo app:
   - They run in a `node:20-slim` container, so this works for npm projects only.
   - The source mount is read-only, so a build that writes into the source tree (for example `dist/`) fails.
   - If the container install step fails, build and tests show "not run" with the reason; the fix is not marked failed.
+- **Running the fixed app.**
+  - After the tests pass, a project with a `Dockerfile` is built into `guardian-fix-<proposal id>:latest` and started on `127.0.0.1` (ephemeral port, read-only, capabilities dropped, CPU/memory/pid limits). Guardian waits for `GET /health` to return 2xx, then removes the container. If it never answers, the fix is marked failed ("App did not start").
+  - The built image is exported with `docker save` and scanned by the pinned Grype offline; findings that are not in the source rescan are listed as image-only (counts and the top 10 ids).
+  - The port is taken from the `Dockerfile` `EXPOSE` line (default 3000); the app must listen on `0.0.0.0` inside the container. Override the route with `GUARDIAN_APP_HEALTH_PATH` (default `/health`).
+  - `docker build` has no `--dns` flag, so when `GUARDIAN_SANDBOX_DNS` is set the build uses the host network. Built images are kept; remove them with `docker rmi`.
 - **GitHub scans.**
   - Full source is cloned only after a fix is approved: shallow clone, 150 MB cap, public repositories only.
   - If the clone fails, the fix is validated from manifests alone and says "tests not run" with the git error.

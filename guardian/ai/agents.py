@@ -48,7 +48,7 @@ from guardian.ai.schemas import (
     PlannerReply,
     RiskReply,
 )
-from guardian.ai.state import BranchInput, EvidencePack, GuardianState
+from guardian.ai.state import BranchInput, EvidencePack, GuardianState, RemediationCandidate
 from guardian.ai.triage import triage
 from guardian.ai.validator import validate
 from guardian.config import AI_PLANNER_MAX, AI_PLANNER_TIMEOUT_S
@@ -385,7 +385,16 @@ class Agents:
             PlannerReply,
             reserved_timeout=self.planner_timeout,
         )
-        error = _planner_error(error)
+        return self._planner_update(state, candidates, packs, reply, _planner_error(error))
+
+    def _planner_update(
+        self,
+        state: GuardianState,
+        candidates: list[RemediationCandidate],
+        packs: dict[str, EvidencePack],
+        reply: PlannerReply | None,
+        error: str | None,
+    ) -> Update:
         by_id = {c.finding_id: c for c in candidates}
         checked = [
             validate_proposal(p, by_id, packs, self.rt.ctx)

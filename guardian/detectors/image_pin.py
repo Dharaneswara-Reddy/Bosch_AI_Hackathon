@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +38,19 @@ def _image_component(image: str) -> dict[str, Any]:
     }
 
 
+def _unpinned_images(lines: list[str]) -> Iterator[tuple[int, str]]:
+    for line_number, line in enumerate(lines, start=1):
+        if line.lstrip().startswith("#"):
+            continue
+        match = _FROM.match(line)
+        if not match:
+            continue
+        image = match.group("image")
+        if image.casefold() == "scratch" or "@sha256:" in image:
+            continue
+        yield line_number, image
+
+
 def detect(target_path: Path, *, ecosystems: list[str] | None = None) -> DetectionResult:
     root = Path(target_path)
     known_ecosystems = ecosystem_list([], ecosystems)
@@ -47,15 +61,7 @@ def detect(target_path: Path, *, ecosystems: list[str] | None = None) -> Detecti
         raw = dockerfile.read_bytes()
         lines = raw.decode("utf-8", errors="replace").splitlines()
         relative = dockerfile.relative_to(root).as_posix()
-        for line_number, line in enumerate(lines, start=1):
-            if line.lstrip().startswith("#"):
-                continue
-            match = _FROM.match(line)
-            if not match:
-                continue
-            image = match.group("image")
-            if image.casefold() == "scratch" or "@sha256:" in image:
-                continue
+        for line_number, image in _unpinned_images(lines):
             pointer = f"lines:{line_number}-{line_number}"
             record = evidence_record("image_pin", relative, pointer, raw)
             evidence.append(record)
