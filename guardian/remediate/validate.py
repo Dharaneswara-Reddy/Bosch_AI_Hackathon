@@ -159,6 +159,31 @@ def _both(reason: str) -> Validation:
     return Validation(build=_not_run(reason), tests=_not_run(reason))
 
 
+NO_BUILD_SCRIPT = "the project defines no build script (scripts.build)"
+NO_TEST_SCRIPT = "the project defines no test script (scripts.test)"
+
+
+def _offline_step(
+    capture: Runner, engine: str, root: Path, command: list[str], timeout: int
+) -> TestRun:
+    done = _run_container(capture, engine, root, command, offline=True, timeout=timeout)
+    return _step(" ".join(command), done)
+
+
+def _build_then_test(
+    capture: Runner, engine: str, root: Path, build_script: str | None, test_script: str | None
+) -> Validation:
+    build = _not_run(NO_BUILD_SCRIPT)
+    if build_script is not None:
+        build = _offline_step(capture, engine, root, ["npm", "run", "build"], BUILD_TIMEOUT_S)
+    if build.status == "failed":
+        return Validation(build=build, tests=_not_run("not run because the build failed"))
+    tests = _not_run(NO_TEST_SCRIPT)
+    if test_script is not None:
+        tests = _offline_step(capture, engine, root, ["npm", "test"], TEST_TIMEOUT_S)
+    return Validation(build=build, tests=tests)
+
+
 def validate_project(
     root: Path, capture: Runner, engine: str | None, source_note: str = ""
 ) -> Validation:
@@ -167,10 +192,7 @@ def validate_project(
         return _both(f"only manifests were fetched; no source to test{note}")
     build_script, test_script = _script(root, "build"), _script(root, "test")
     if build_script is None and test_script is None:
-        return Validation(
-            build=_not_run("the project defines no build script (scripts.build)"),
-            tests=_not_run("the project defines no test script (scripts.test)"),
-        )
+        return Validation(build=_not_run(NO_BUILD_SCRIPT), tests=_not_run(NO_TEST_SCRIPT))
     if engine is None:
         return _both("no container engine (docker/podman); project code never runs on the host")
     install = _run_container(
@@ -183,27 +205,4 @@ def validate_project(
     )
     if install.returncode != 0:
         return _both(f"container dependency install failed: {install.output[-300:]}")
-    build = _not_run("the project defines no build script (scripts.build)")
-    if build_script is not None:
-        build = _step(
-            "npm run build",
-            _run_container(
-                capture,
-                engine,
-                root,
-                ["npm", "run", "build"],
-                offline=True,
-                timeout=BUILD_TIMEOUT_S,
-            ),
-        )
-    if build.status == "failed":
-        return Validation(build=build, tests=_not_run("not run because the build failed"))
-    tests = _not_run("the project defines no test script (scripts.test)")
-    if test_script is not None:
-        tests = _step(
-            "npm test",
-            _run_container(
-                capture, engine, root, ["npm", "test"], offline=True, timeout=TEST_TIMEOUT_S
-            ),
-        )
-    return Validation(build=build, tests=tests)
+    return _build_then_test(capture, engine, root, build_script, test_script)

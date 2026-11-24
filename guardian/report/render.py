@@ -11,7 +11,7 @@ from urllib.parse import quote
 from jinja2 import Environment, FileSystemLoader
 from pydantic import BaseModel
 
-from guardian.decisions import DecisionLog, apply_decisions
+from guardian.decisions import DecisionLog, HumanDecision, apply_decisions
 from guardian.models import (
     AgentTrace,
     CoverageArtifact,
@@ -171,13 +171,7 @@ def _unknowns(scan: Scan, findings: list[Finding]) -> list[str]:
     return items + list(LIMITATIONS)
 
 
-def render(run_dir: Path) -> None:
-    """Write equivalent HTML and Markdown views from the four scan artifacts."""
-    root = run_dir.resolve()
-    scan = _load(root, "run.json", Scan)
-    graph = _load(root, "graph.json", GraphArtifact)
-    artifacts = _load(root, "findings.json", FindingsArtifact)
-    coverage = _load(root, "coverage.json", CoverageArtifact)
+def _environment() -> Environment:
     environment = Environment(
         loader=FileSystemLoader(Path(__file__).with_name("templates")),
         autoescape=lambda name: bool(name and name.endswith(".html.j2")),
@@ -185,13 +179,23 @@ def render(run_dir: Path) -> None:
         lstrip_blocks=True,
     )
     environment.filters["md"] = _markdown
-    decisions = DecisionLog(root).history()
+    return environment
+
+
+def _template_data(
+    root: Path,
+    scan: Scan,
+    graph: GraphArtifact,
+    artifacts: FindingsArtifact,
+    coverage: CoverageArtifact,
+    decisions: list[HumanDecision],
+) -> dict[str, object]:
     findings = apply_decisions(artifacts.findings, decisions)
     ranked = _ranked(findings)
     analysis = [item for item in artifacts.claims if item.step != FIX_STEP]
     reviewed = _reviewed(artifacts.agent_trace)
     groups = _groups(ranked, graph, reviewed)
-    data = {
+    return {
         "scan": scan,
         "coverage": coverage,
         "components": {item.component_id: item for item in graph.nodes},
@@ -202,9 +206,7 @@ def render(run_dir: Path) -> None:
         "reviewed_count": len(reviewed),
         "relevance_known": any(f.relevance and f.relevance.verdict != "unknown" for f in ranked),
         "suspicious": [
-            item
-            for item in findings
-            if item.kind in (FindingKind.ANOMALY, FindingKind.MALICIOUS)
+            item for item in findings if item.kind in (FindingKind.ANOMALY, FindingKind.MALICIOUS)
         ],
         "entries": _entry_paths([cast(Finding, group["finding"]) for group in groups], graph),
         "evidence": _evidence_details(root, artifacts.evidence),
@@ -218,6 +220,19 @@ def render(run_dir: Path) -> None:
         "human_decisions": decisions,
         "has_sbom": (root / "sbom.cdx.json").is_file(),
     }
+
+
+def render(run_dir: Path) -> None:
+    """Write equivalent HTML and Markdown views from the four scan artifacts."""
+    root = run_dir.resolve()
+    scan = _load(root, "run.json", Scan)
+    graph = _load(root, "graph.json", GraphArtifact)
+    artifacts = _load(root, "findings.json", FindingsArtifact)
+    coverage = _load(root, "coverage.json", CoverageArtifact)
+    decisions = DecisionLog(root).history()
+    data = _template_data(root, scan, graph, artifacts, coverage, decisions)
+    ranked = cast(list[Finding], data["findings"])
+    environment = _environment()
     final = build_report(scan, graph, artifacts, ranked, decisions, load_fixes(root.parent))
     (root / "report.json").write_text(final.model_dump_json(indent=2) + "\n", encoding="utf-8")
     data["final"] = final
