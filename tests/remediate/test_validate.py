@@ -2,6 +2,8 @@ import json
 from collections.abc import Sequence
 from pathlib import Path
 
+import pytest
+
 from guardian.remediate.sandbox import CommandResult
 from guardian.remediate.validate import validate_project
 
@@ -33,18 +35,24 @@ def _project(root: Path, scripts: dict[str, str], source: bool = True) -> Path:
 
 
 def test_not_run_without_source(tmp_path: Path) -> None:
-    result = validate_project(_project(tmp_path, {"test": "jest"}, source=False),
-                              FakeCapture(), "docker")
+    result = validate_project(
+        _project(tmp_path, {"test": "jest"}, source=False), FakeCapture(), "docker"
+    )
     assert result.tests.status == "not_run"
     assert result.tests.reason == "only manifests were fetched; no source to test"
     assert result.build.status == "not_run"
 
 
 def test_source_note_explains_why_source_is_missing(tmp_path: Path) -> None:
-    result = validate_project(_project(tmp_path, {"test": "jest"}, source=False),
-                              FakeCapture(), "docker", source_note="git clone failed: 404")
+    result = validate_project(
+        _project(tmp_path, {"test": "jest"}, source=False),
+        FakeCapture(),
+        "docker",
+        source_note="git clone failed: 404",
+    )
     assert result.tests.reason == (
-        "only manifests were fetched; no source to test (git clone failed: 404)")
+        "only manifests were fetched; no source to test (git clone failed: 404)"
+    )
 
 
 def test_not_run_without_a_test_script(tmp_path: Path) -> None:
@@ -54,6 +62,17 @@ def test_not_run_without_a_test_script(tmp_path: Path) -> None:
     assert result.tests.status == "not_run" and "no test script" in result.tests.reason
     assert result.build.status == "not_run" and "no build script" in result.build.reason
     assert capture.calls == []
+
+
+def test_configured_dns_is_given_only_to_the_networked_install(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GUARDIAN_SANDBOX_DNS", "1.1.1.1")
+    capture = FakeCapture(OK, OK, CommandResult(0, TAP_PASS))
+    validate_project(_project(tmp_path, {"build": "tsc", "test": "node --test"}), capture, "docker")
+    install, build, test = capture.calls
+    assert install[install.index("--dns") + 1] == "1.1.1.1"
+    assert "--dns" not in build and "--dns" not in test
 
 
 def test_not_run_without_a_container_engine(tmp_path: Path) -> None:
@@ -66,7 +85,8 @@ def test_not_run_without_a_container_engine(tmp_path: Path) -> None:
 def test_install_then_isolated_build_and_test(tmp_path: Path) -> None:
     capture = FakeCapture(OK, OK, CommandResult(0, TAP_PASS))
     result = validate_project(
-        _project(tmp_path, {"build": "tsc", "test": "node --test"}), capture, "docker")
+        _project(tmp_path, {"build": "tsc", "test": "node --test"}), capture, "docker"
+    )
     install, build, test = capture.calls
     assert install[:2] == ["docker", "run"] and "--ignore-scripts" in install
     assert "--network" not in install
@@ -92,8 +112,9 @@ def test_failing_tests_report_counts_names_and_output_tail(tmp_path: Path) -> No
 
 def test_output_tail_keeps_only_the_last_forty_lines(tmp_path: Path) -> None:
     noisy = "\n".join(f"line {n}" for n in range(100))
-    result = validate_project(_project(tmp_path, {"test": "x"}),
-                              FakeCapture(OK, CommandResult(1, noisy)), "docker")
+    result = validate_project(
+        _project(tmp_path, {"test": "x"}), FakeCapture(OK, CommandResult(1, noisy)), "docker"
+    )
     assert result.tests.output_tail[0] == "line 60" and len(result.tests.output_tail) == 40
 
 

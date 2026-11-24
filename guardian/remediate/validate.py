@@ -42,7 +42,12 @@ def run_captured(command: Sequence[str], cwd: Path, timeout: int) -> CommandResu
     env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
     try:
         done = subprocess.run(
-            list(command), cwd=cwd, env=env, capture_output=True, text=True, timeout=timeout,
+            list(command),
+            cwd=cwd,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
             check=False,
         )
     except subprocess.TimeoutExpired:
@@ -55,7 +60,8 @@ def run_captured(command: Sequence[str], cwd: Path, timeout: int) -> CommandResu
 def _has_source(root: Path) -> bool:
     return any(
         path.suffix in SOURCE_SUFFIXES and not IGNORED_DIRS & set(path.relative_to(root).parts)
-        for path in root.rglob("*") if path.is_file()
+        for path in root.rglob("*")
+        if path.is_file()
     )
 
 
@@ -69,11 +75,32 @@ def _script(root: Path, name: str) -> str | None:
 
 def _container(engine: str, name: str, root: Path, *, offline: bool) -> list[str]:
     mount = f"{root}:/work" + (":ro" if offline else "")
-    isolation = ["--network", "none", "--read-only", "--cap-drop", "ALL"] if offline else []
+    dns = os.environ.get("GUARDIAN_SANDBOX_DNS", "").strip()
+    networked = ["--dns", dns] if dns else []
+    isolation = ["--network", "none", "--read-only", "--cap-drop", "ALL"] if offline else networked
     user = f"{os.getuid()}:{os.getgid()}"
-    return [engine, "run", "--rm", "--name", name, *isolation, *LIMITS, "--user", user,
-            "--security-opt", "no-new-privileges", "--tmpfs", "/tmp", "-e", "HOME=/tmp",
-            "-v", mount, "-w", "/work", CONTAINER_IMAGE]
+    return [
+        engine,
+        "run",
+        "--rm",
+        "--name",
+        name,
+        *isolation,
+        *LIMITS,
+        "--user",
+        user,
+        "--security-opt",
+        "no-new-privileges",
+        "--tmpfs",
+        "/tmp",
+        "-e",
+        "HOME=/tmp",
+        "-v",
+        mount,
+        "-w",
+        "/work",
+        CONTAINER_IMAGE,
+    ]
 
 
 def _run_container(
@@ -104,12 +131,24 @@ def _step(label: str, done: CommandResult) -> TestRun:
     passed, failed, total = counts.get("pass"), counts.get("fail"), counts.get("tests")
     tail = _tail(done.output)
     if done.returncode == 0:
-        return TestRun(status="passed", reason=f"{label} passed in an isolated container",
-                       passed=passed, failed=failed, total=total, output_tail=tail)
+        return TestRun(
+            status="passed",
+            reason=f"{label} passed in an isolated container",
+            passed=passed,
+            failed=failed,
+            total=total,
+            output_tail=tail,
+        )
     timed_out = done.output if done.returncode == TIMED_OUT else ""
-    return TestRun(status="failed", passed=passed, failed=failed, total=total, output_tail=tail,
-                   failed_tests=_failed_names(done.output),
-                   reason=timed_out or f"{label} failed (exit {done.returncode})")
+    return TestRun(
+        status="failed",
+        passed=passed,
+        failed=failed,
+        total=total,
+        output_tail=tail,
+        failed_tests=_failed_names(done.output),
+        reason=timed_out or f"{label} failed (exit {done.returncode})",
+    )
 
 
 def _not_run(reason: str) -> TestRun:
@@ -128,24 +167,43 @@ def validate_project(
         return _both(f"only manifests were fetched; no source to test{note}")
     build_script, test_script = _script(root, "build"), _script(root, "test")
     if build_script is None and test_script is None:
-        return Validation(build=_not_run("the project defines no build script (scripts.build)"),
-                          tests=_not_run("the project defines no test script (scripts.test)"))
+        return Validation(
+            build=_not_run("the project defines no build script (scripts.build)"),
+            tests=_not_run("the project defines no test script (scripts.test)"),
+        )
     if engine is None:
         return _both("no container engine (docker/podman); project code never runs on the host")
     install = _run_container(
-        capture, engine, root, ["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund"],
-        offline=False, timeout=INSTALL_TIMEOUT_S)
+        capture,
+        engine,
+        root,
+        ["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund"],
+        offline=False,
+        timeout=INSTALL_TIMEOUT_S,
+    )
     if install.returncode != 0:
         return _both(f"container dependency install failed: {install.output[-300:]}")
     build = _not_run("the project defines no build script (scripts.build)")
     if build_script is not None:
-        build = _step("npm run build", _run_container(
-            capture, engine, root, ["npm", "run", "build"], offline=True,
-            timeout=BUILD_TIMEOUT_S))
+        build = _step(
+            "npm run build",
+            _run_container(
+                capture,
+                engine,
+                root,
+                ["npm", "run", "build"],
+                offline=True,
+                timeout=BUILD_TIMEOUT_S,
+            ),
+        )
     if build.status == "failed":
         return Validation(build=build, tests=_not_run("not run because the build failed"))
     tests = _not_run("the project defines no test script (scripts.test)")
     if test_script is not None:
-        tests = _step("npm test", _run_container(
-            capture, engine, root, ["npm", "test"], offline=True, timeout=TEST_TIMEOUT_S))
+        tests = _step(
+            "npm test",
+            _run_container(
+                capture, engine, root, ["npm", "test"], offline=True, timeout=TEST_TIMEOUT_S
+            ),
+        )
     return Validation(build=build, tests=tests)
