@@ -69,7 +69,7 @@ test('expectedText summarises levels and advisory count before approval', () => 
 test('compareReduction sets expected beside the actual fixed findings', () => {
   const diff = {fixed: [{risk_level: 'high'}, {risk_level: 'high'}, {risk_level: 'medium'}]};
   assert.deepEqual(compareReduction(expected, diff), {
-    expected: '6 High, 1 Medium', actual: '2 High, 1 Medium', matches: false});
+    expected: '6 High, 1 Medium', actual: '2 High, 1 Medium', matches: false, label: 'less than expected'});
   const same = {fixed: [...Array(6).fill({risk_level: 'high'}), {risk_level: 'medium'}]};
   assert.equal(compareReduction(expected, same).matches, true);
   assert.equal(compareReduction(null, same), null);
